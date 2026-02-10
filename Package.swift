@@ -1,0 +1,56 @@
+// swift-tools-version: 6.0
+import PackageDescription
+
+let package = Package(
+    name: "Post",
+    platforms: [
+        .macOS("14.0")
+    ],
+    products: [
+        .library(
+            name: "PostServer",
+            targets: ["PostServer"]
+        ),
+        .executable(
+            name: "postd",
+            targets: ["postd"]
+        ),
+        .executable(
+            name: "post",
+            targets: ["post"]
+        )
+    ],
+    dependencies: [
+        .package(path: "../SwiftMCP"),
+        .package(path: "../SwiftMail"),
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0")
+    ],
+    targets: [
+        .target(
+            name: "PostServer",
+            dependencies: [
+                .product(name: "SwiftMCP", package: "SwiftMCP"),
+                .product(name: "SwiftMail", package: "SwiftMail"),
+                .product(name: "Logging", package: "swift-log")
+            ]
+        ),
+        .executableTarget(
+            name: "postd",
+            dependencies: [
+                "PostServer",
+                .product(name: "SwiftMCP", package: "SwiftMCP"),
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                .product(name: "Logging", package: "swift-log")
+            ]
+        ),
+        .executableTarget(
+            name: "post",
+            dependencies: [
+                "PostServer",
+                .product(name: "SwiftMCP", package: "SwiftMCP"),
+                .product(name: "ArgumentParser", package: "swift-argument-parser")
+            ]
+        )
+    ]
+)
