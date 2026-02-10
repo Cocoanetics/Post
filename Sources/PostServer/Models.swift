@@ -82,24 +82,3 @@ public struct MailboxInfo: Codable, Sendable {
         self.specialUse = specialUse
     }
 }
-
-// Wrapper structs to avoid SwiftMCP's MCPArrayOutputWrapper issue
-// (arrays of objects get wrapped in {"items":[...]} which breaks proxy decoding)
-
-@Schema
-public struct ServerList: Codable, Sendable {
-    public let servers: [ServerInfo]
-    public init(servers: [ServerInfo]) { self.servers = servers }
-}
-
-@Schema
-public struct MessageList: Codable, Sendable {
-    public let messages: [MessageHeader]
-    public init(messages: [MessageHeader]) { self.messages = messages }
-}
-
-@Schema
-public struct FolderList: Codable, Sendable {
-    public let folders: [MailboxInfo]
-    public init(folders: [MailboxInfo]) { self.folders = folders }
-}

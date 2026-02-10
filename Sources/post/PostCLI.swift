@@ -18,8 +18,8 @@ extension PostCLI {
 
         func run() async throws {
             try await withClient { client in
-                let result = try await client.listServers()
-                printServersTable(result.servers)
+                let servers = try await client.listServers()
+                printServersTable(servers)
             }
         }
     }
@@ -39,8 +39,8 @@ extension PostCLI {
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
-                let result = try await client.listMessages(serverId: serverId, mailbox: mailbox, limit: limit)
-                printMessageHeaders(result.messages)
+                let messages = try await client.listMessages(serverId: serverId, mailbox: mailbox, limit: limit)
+                printMessageHeaders(messages)
             }
         }
     }
@@ -75,14 +75,14 @@ extension PostCLI {
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
-                let result = try await client.listFolders(serverId: serverId)
+                let folders = try await client.listFolders(serverId: serverId)
 
-                if result.folders.isEmpty {
+                if folders.isEmpty {
                     print("No folders found.")
                     return
                 }
 
-                for folder in result.folders {
+                for folder in folders {
                     if let specialUse = folder.specialUse, !specialUse.isEmpty {
                         print("- \(folder.name) (\(specialUse))")
                     } else {
@@ -120,7 +120,7 @@ extension PostCLI {
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
-                let result = try await client.searchMessages(
+                let messages = try await client.searchMessages(
                     serverId: serverId,
                     mailbox: mailbox,
                     from: from,
@@ -129,7 +129,7 @@ extension PostCLI {
                     since: since,
                     before: before
                 )
-                printMessageHeaders(result.messages)
+                printMessageHeaders(messages)
             }
         }
     }
@@ -195,8 +195,8 @@ private func resolveServerID(explicit: String?, client: PostProxy) async throws 
         return explicit
     }
 
-    let result = try await client.listServers()
-    guard let first = result.servers.first else {
+    let servers = try await client.listServers()
+    guard let first = servers.first else {
         throw PostCLIError.noServersConfigured
     }
 

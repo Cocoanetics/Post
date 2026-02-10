@@ -41,8 +41,8 @@ public actor PostServer {
 
     /// Lists all configured IMAP servers with their IDs and names
     @MCPTool
-    public func listServers() async -> ServerList {
-        await ServerList(servers: connectionManager.serverInfos())
+    public func listServers() async -> [ServerInfo] {
+        await connectionManager.serverInfos()
     }
 
     /// Lists emails in a mailbox on the specified server
@@ -50,7 +50,7 @@ public actor PostServer {
     /// - Parameter mailbox: Mailbox name (default: "INBOX")
     /// - Parameter limit: Number of messages to list (default: 10)
     @MCPTool
-    public func listMessages(serverId: String, mailbox: String = "INBOX", limit: Int = 10) async throws -> MessageList {
+    public func listMessages(serverId: String, mailbox: String = "INBOX", limit: Int = 10) async throws -> [MessageHeader] {
         guard limit > 0 else {
             throw PostServerError.invalidLimit(limit)
         }
@@ -58,11 +58,11 @@ public actor PostServer {
         return try await withServer(serverId: serverId) { server in
             let status = try await server.selectMailbox(mailbox)
             guard let latest = status.latest(limit) else {
-                return MessageList(messages: [])
+                return []
             }
 
             let headers = try await collectHeaders(from: server.fetchMessages(using: latest))
-            return MessageList(messages: headers.sorted { $0.uid > $1.uid })
+            return headers.sorted { $0.uid > $1.uid }
         }
     }
 
@@ -91,11 +91,11 @@ public actor PostServer {
     /// Lists mailbox folders on the specified server
     /// - Parameter serverId: The server identifier
     @MCPTool
-    public func listFolders(serverId: String) async throws -> FolderList {
+    public func listFolders(serverId: String) async throws -> [MailboxInfo] {
         try await withServer(serverId: serverId) { server in
             let folders = try await server.listMailboxes()
 
-            let items = folders
+            return folders
                 .map {
                     MailboxInfo(
                         name: $0.name,
@@ -103,7 +103,6 @@ public actor PostServer {
                     )
                 }
                 .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-            return FolderList(folders: items)
         }
     }
 
@@ -124,7 +123,7 @@ public actor PostServer {
         text: String? = nil,
         since: String? = nil,
         before: String? = nil
-    ) async throws -> MessageList {
+    ) async throws -> [MessageHeader] {
         try await withServer(serverId: serverId) { server in
             _ = try await server.selectMailbox(mailbox)
 
@@ -156,11 +155,11 @@ public actor PostServer {
 
             let matches: MessageIdentifierSet<UID> = try await server.search(criteria: criteria)
             guard !matches.isEmpty else {
-                return MessageList(messages: [])
+                return []
             }
 
             let headers = try await collectHeaders(from: server.fetchMessages(using: matches))
-            return MessageList(messages: headers.sorted { $0.uid > $1.uid })
+            return headers.sorted { $0.uid > $1.uid }
         }
     }
 
