@@ -9,6 +9,9 @@ public enum PostServerError: Error, LocalizedError, Sendable {
     case invalidUIDSet(String)
     case invalidDate(String, String)
     case messageNotFound(uid: Int, mailbox: String)
+    case noAttachments(uid: Int)
+    case attachmentNotFound(filename: String, uid: Int)
+    case attachmentDataMissing(filename: String)
 
     public var errorDescription: String? {
         switch self {
@@ -22,6 +25,12 @@ public enum PostServerError: Error, LocalizedError, Sendable {
             return "Invalid ISO 8601 date for \(field): '\(value)'."
         case .messageNotFound(let uid, let mailbox):
             return "Message UID \(uid) was not found in mailbox '\(mailbox)'."
+        case .noAttachments(let uid):
+            return "Message UID \(uid) has no attachments."
+        case .attachmentNotFound(let filename, let uid):
+            return "Attachment '\(filename)' not found in message UID \(uid)."
+        case .attachmentDataMissing(let filename):
+            return "Could not decode attachment data for '\(filename)'."
         }
     }
 }
@@ -178,6 +187,111 @@ public actor PostServer {
             _ = try await server.selectMailbox(mailbox)
             try await server.move(messages: set, to: targetMailbox)
             return "Moved \(set.count) message(s) from \(mailbox) to \(targetMailbox)."
+        }
+    }
+
+    /// Moves messages to the trash folder
+    /// - Parameter serverId: The server identifier
+    /// - Parameter uids: Comma-separated UIDs
+    /// - Parameter mailbox: Source mailbox (default: "INBOX")
+    @MCPTool
+    public func trashMessages(serverId: String, uids: String, mailbox: String = "INBOX") async throws -> String {
+        guard let set = MessageIdentifierSet<UID>(string: uids) else {
+            throw PostServerError.invalidUIDSet(uids)
+        }
+
+        return try await withServer(serverId: serverId) { server in
+            _ = try await server.listSpecialUseMailboxes()
+            _ = try await server.selectMailbox(mailbox)
+            try await server.moveToTrash(messages: set)
+            return "Trashed \(set.count) message(s)."
+        }
+    }
+
+    /// Archives messages (marks as read, moves to archive folder)
+    /// - Parameter serverId: The server identifier
+    /// - Parameter uids: Comma-separated UIDs
+    /// - Parameter mailbox: Source mailbox (default: "INBOX")
+    @MCPTool
+    public func archiveMessages(serverId: String, uids: String, mailbox: String = "INBOX") async throws -> String {
+        guard let set = MessageIdentifierSet<UID>(string: uids) else {
+            throw PostServerError.invalidUIDSet(uids)
+        }
+
+        return try await withServer(serverId: serverId) { server in
+            _ = try await server.listSpecialUseMailboxes()
+            _ = try await server.selectMailbox(mailbox)
+            try await server.archive(messages: set)
+            return "Archived \(set.count) message(s)."
+        }
+    }
+
+    /// Marks messages as junk and moves to junk folder
+    /// - Parameter serverId: The server identifier
+    /// - Parameter uids: Comma-separated UIDs
+    /// - Parameter mailbox: Source mailbox (default: "INBOX")
+    @MCPTool
+    public func junkMessages(serverId: String, uids: String, mailbox: String = "INBOX") async throws -> String {
+        guard let set = MessageIdentifierSet<UID>(string: uids) else {
+            throw PostServerError.invalidUIDSet(uids)
+        }
+
+        return try await withServer(serverId: serverId) { server in
+            _ = try await server.listSpecialUseMailboxes()
+            _ = try await server.selectMailbox(mailbox)
+            try await server.markAsJunk(messages: set)
+            return "Marked \(set.count) message(s) as junk."
+        }
+    }
+
+    /// Downloads an attachment from a message
+    /// - Parameter serverId: The server identifier
+    /// - Parameter uid: The message UID
+    /// - Parameter filename: Attachment filename to download (optional, downloads first if omitted)
+    /// - Parameter mailbox: Mailbox name (default: "INBOX")
+    /// - Returns: Base64-encoded attachment data with metadata
+    @MCPTool
+    public func downloadAttachment(serverId: String, uid: Int, filename: String? = nil, mailbox: String = "INBOX") async throws -> AttachmentData {
+        guard (1...Int(UInt32.max)).contains(uid) else {
+            throw PostServerError.invalidUID(uid)
+        }
+
+        return try await withServer(serverId: serverId) { server in
+            _ = try await server.selectMailbox(mailbox)
+            let set = MessageIdentifierSet<UID>(UID(UInt32(uid)))
+
+            for try await message in server.fetchMessages(using: set) {
+                let attachments = message.attachments
+
+                guard !attachments.isEmpty else {
+                    throw PostServerError.noAttachments(uid: uid)
+                }
+
+                let part: MessagePart
+                if let filename {
+                    guard let match = attachments.first(where: {
+                        ($0.filename ?? $0.suggestedFilename).lowercased() == filename.lowercased()
+                    }) else {
+                        throw PostServerError.attachmentNotFound(filename: filename, uid: uid)
+                    }
+                    part = match
+                } else {
+                    part = attachments[0]
+                }
+
+                guard let data = part.decodedData() ?? part.data else {
+                    throw PostServerError.attachmentDataMissing(filename: part.suggestedFilename)
+                }
+
+                return AttachmentData(
+                    filename: part.filename ?? part.suggestedFilename,
+                    contentType: part.contentType,
+                    data: data.base64EncodedString(),
+                    size: data.count
+                )
+            }
+
+            throw PostServerError.messageNotFound(uid: uid, mailbox: mailbox)
         }
     }
 

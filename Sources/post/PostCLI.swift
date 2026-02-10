@@ -8,7 +8,7 @@ struct PostCLI: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "post",
         abstract: "Post CLI client",
-        subcommands: [Servers.self, List.self, Fetch.self, Folders.self, Search.self, Move.self]
+        subcommands: [Servers.self, List.self, Fetch.self, Folders.self, Search.self, Move.self, Trash.self, Archive.self, Junk.self, Attachment.self, Idle.self]
     )
 }
 
@@ -162,6 +162,147 @@ extension PostCLI {
             }
         }
     }
+    struct Trash: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Move messages to trash")
+
+        @Argument(help: "Message UID set (e.g. 1,2,5-9)")
+        var uids: String
+
+        @Option(name: .long, help: "Server identifier")
+        var server: String?
+
+        @Option(name: .long, help: "Source mailbox")
+        var mailbox: String = "INBOX"
+
+        func run() async throws {
+            try await withClient { client in
+                let serverId = try await resolveServerID(explicit: server, client: client)
+                let result = try await client.trashMessages(serverId: serverId, uids: uids, mailbox: mailbox)
+                print(result)
+            }
+        }
+    }
+
+    struct Archive: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Archive messages")
+
+        @Argument(help: "Message UID set (e.g. 1,2,5-9)")
+        var uids: String
+
+        @Option(name: .long, help: "Server identifier")
+        var server: String?
+
+        @Option(name: .long, help: "Source mailbox")
+        var mailbox: String = "INBOX"
+
+        func run() async throws {
+            try await withClient { client in
+                let serverId = try await resolveServerID(explicit: server, client: client)
+                let result = try await client.archiveMessages(serverId: serverId, uids: uids, mailbox: mailbox)
+                print(result)
+            }
+        }
+    }
+
+    struct Junk: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Mark messages as junk")
+
+        @Argument(help: "Message UID set (e.g. 1,2,5-9)")
+        var uids: String
+
+        @Option(name: .long, help: "Server identifier")
+        var server: String?
+
+        @Option(name: .long, help: "Source mailbox")
+        var mailbox: String = "INBOX"
+
+        func run() async throws {
+            try await withClient { client in
+                let serverId = try await resolveServerID(explicit: server, client: client)
+                let result = try await client.junkMessages(serverId: serverId, uids: uids, mailbox: mailbox)
+                print(result)
+            }
+        }
+    }
+
+    struct Attachment: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Download attachment from a message")
+
+        @Argument(help: "Message UID")
+        var uid: Int
+
+        @Option(name: .long, help: "Attachment filename (downloads first if omitted)")
+        var filename: String?
+
+        @Option(name: .long, help: "Server identifier")
+        var server: String?
+
+        @Option(name: .long, help: "Mailbox name")
+        var mailbox: String = "INBOX"
+
+        @Option(name: .long, help: "Output directory (default: current directory)")
+        var out: String = "."
+
+        func run() async throws {
+            try await withClient { client in
+                let serverId = try await resolveServerID(explicit: server, client: client)
+                let attachment = try await client.downloadAttachment(serverId: serverId, uid: uid, filename: filename, mailbox: mailbox)
+
+                guard let data = Data(base64Encoded: attachment.data) else {
+                    print("Error: Failed to decode attachment data.")
+                    return
+                }
+
+                let outputDir = URL(fileURLWithPath: out, isDirectory: true)
+                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+                let destination = outputDir.appendingPathComponent(attachment.filename)
+                try data.write(to: destination)
+                print("Saved \(attachment.filename) (\(attachment.contentType), \(formatBytes(attachment.size))) to \(destination.path)")
+            }
+        }
+    }
+
+    struct Idle: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Watch for new messages (polls via MCP)")
+
+        @Option(name: .long, help: "Server identifier")
+        var server: String?
+
+        @Option(name: .long, help: "Mailbox name")
+        var mailbox: String = "INBOX"
+
+        @Option(name: .long, help: "Poll interval in seconds")
+        var interval: Int = 10
+
+        func run() async throws {
+            try await withClient { client in
+                let serverId = try await resolveServerID(explicit: server, client: client)
+                print("Watching \(mailbox) on \(serverId) (poll every \(interval)s, Ctrl+C to stop)...")
+
+                var knownUIDs: Set<Int> = []
+
+                // Initial fetch to establish baseline
+                let initial = try await client.listMessages(serverId: serverId, mailbox: mailbox, limit: 20)
+                for msg in initial {
+                    knownUIDs.insert(msg.uid)
+                }
+                print("Baseline: \(knownUIDs.count) messages")
+
+                while !Task.isCancelled {
+                    try await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)
+
+                    let current = try await client.listMessages(serverId: serverId, mailbox: mailbox, limit: 20)
+                    for msg in current {
+                        if !knownUIDs.contains(msg.uid) {
+                            knownUIDs.insert(msg.uid)
+                            print("🔔 New: [\(msg.uid)] \(msg.date) - \(msg.from)")
+                            print("   \(msg.subject)")
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 private enum PostCLIError: Error, LocalizedError {
@@ -269,4 +410,12 @@ private func pad(_ value: String, to width: Int) -> String {
         return value
     }
     return value + String(repeating: " ", count: width - value.count)
+}
+
+private func formatBytes(_ bytes: Int) -> String {
+    if bytes < 1024 { return "\(bytes) B" }
+    let kb = Double(bytes) / 1024
+    if kb < 1024 { return String(format: "%.1f KB", kb) }
+    let mb = kb / 1024
+    return String(format: "%.1f MB", mb)
 }
