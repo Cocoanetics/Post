@@ -118,3 +118,50 @@ public struct MailboxInfo: Codable, Sendable {
         self.specialUse = specialUse
     }
 }
+
+@Schema
+public struct MailboxStatusInfo: Codable, Sendable {
+    public let messageCount: Int?
+    public let recentCount: Int?
+    public let unseenCount: Int?
+    public let uidNext: Int?
+    public let uidValidity: Int?
+
+    public init(
+        messageCount: Int?,
+        recentCount: Int?,
+        unseenCount: Int?,
+        uidNext: Int?,
+        uidValidity: Int?
+    ) {
+        self.messageCount = messageCount
+        self.recentCount = recentCount
+        self.unseenCount = unseenCount
+        self.uidNext = uidNext
+        self.uidValidity = uidValidity
+    }
+}
+
+@Schema
+public struct QuotaResourceInfo: Codable, Sendable {
+    public let name: String
+    public let usage: Int
+    public let limit: Int
+
+    public init(name: String, usage: Int, limit: Int) {
+        self.name = name
+        self.usage = usage
+        self.limit = limit
+    }
+}
+
+@Schema
+public struct QuotaInfo: Codable, Sendable {
+    public let quotaRoot: String
+    public let resources: [QuotaResourceInfo]
+
+    public init(quotaRoot: String, resources: [QuotaResourceInfo]) {
+        self.quotaRoot = quotaRoot
+        self.resources = resources
+    }
+}

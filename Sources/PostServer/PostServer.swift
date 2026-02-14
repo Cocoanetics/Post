@@ -8,6 +8,8 @@ public enum PostServerError: Error, LocalizedError, Sendable {
     case invalidUID(Int)
     case invalidUIDSet(String)
     case invalidDate(String, String)
+    case invalidFlagOperation(String)
+    case invalidFlags(String)
     case messageNotFound(uid: Int, mailbox: String)
     case noAttachments(uid: Int)
     case attachmentNotFound(filename: String, uid: Int)
@@ -23,6 +25,10 @@ public enum PostServerError: Error, LocalizedError, Sendable {
             return "Invalid UID set '\(value)'. Use comma-separated values or ranges (e.g. 1,2,5-9)."
         case .invalidDate(let field, let value):
             return "Invalid ISO 8601 date for \(field): '\(value)'."
+        case .invalidFlagOperation(let operation):
+            return "Invalid flag operation '\(operation)'. Use 'add' or 'remove'."
+        case .invalidFlags(let flags):
+            return "Invalid flag list '\(flags)'. Use comma-separated names like seen,flagged,custom."
         case .messageNotFound(let uid, let mailbox):
             return "Message UID \(uid) was not found in mailbox '\(mailbox)'."
         case .noAttachments(let uid):
@@ -320,6 +326,34 @@ public actor PostServer {
         }
     }
 
+    /// Creates a mailbox folder on the specified server
+    /// - Parameter serverId: The server identifier
+    /// - Parameter name: Mailbox name to create
+    @MCPTool
+    public func createMailbox(serverId: String, name: String) async throws -> String {
+        try await withServer(serverId: serverId) { server in
+            try await server.createMailbox(name)
+            return "Created mailbox '\(name)'."
+        }
+    }
+
+    /// Gets mailbox status information without selecting the mailbox
+    /// - Parameter serverId: The server identifier
+    /// - Parameter mailbox: Mailbox name (default: "INBOX")
+    @MCPTool
+    public func mailboxStatus(serverId: String, mailbox: String = "INBOX") async throws -> MailboxStatusInfo {
+        try await withServer(serverId: serverId) { server in
+            let status = try await server.mailboxStatus(mailbox)
+            return MailboxStatusInfo(
+                messageCount: status.messageCount,
+                recentCount: status.recentCount,
+                unseenCount: status.unseenCount,
+                uidNext: status.nextUID.map { Int(String(describing: $0))! },
+                uidValidity: status.uidValidity.map { Int(String(describing: $0))! }
+            )
+        }
+    }
+
     /// Searches emails on the specified server
     /// - Parameter serverId: The server identifier
     /// - Parameter mailbox: Mailbox name (default: "INBOX")
@@ -395,6 +429,62 @@ public actor PostServer {
         }
     }
 
+    /// Copies messages to another folder
+    /// - Parameter serverId: The server identifier
+    /// - Parameter uids: Comma-separated UIDs
+    /// - Parameter targetMailbox: Target folder
+    /// - Parameter mailbox: Source mailbox (default: "INBOX")
+    @MCPTool
+    public func copyMessages(serverId: String, uids: String, targetMailbox: String, mailbox: String = "INBOX") async throws -> String {
+        guard let set = MessageIdentifierSet<UID>(string: uids) else {
+            throw PostServerError.invalidUIDSet(uids)
+        }
+
+        return try await withServer(serverId: serverId) { server in
+            _ = try await server.selectMailbox(mailbox)
+            try await server.copy(messages: set, to: targetMailbox)
+            return "Copied \(set.count) message(s) from \(mailbox) to \(targetMailbox)."
+        }
+    }
+
+    /// Adds or removes flags on messages
+    /// - Parameter serverId: The server identifier
+    /// - Parameter uids: Comma-separated UIDs
+    /// - Parameter flags: Comma-separated flag names
+    /// - Parameter operation: "add" or "remove"
+    /// - Parameter mailbox: Source mailbox (default: "INBOX")
+    @MCPTool
+    public func flagMessages(
+        serverId: String,
+        uids: String,
+        flags: String,
+        operation: String,
+        mailbox: String = "INBOX"
+    ) async throws -> String {
+        guard let set = MessageIdentifierSet<UID>(string: uids) else {
+            throw PostServerError.invalidUIDSet(uids)
+        }
+
+        let parsedFlags = try parseFlags(flags)
+        let operationValue = operation.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let flagLabel = parsedFlags.map(\.description).joined(separator: ", ")
+
+        return try await withServer(serverId: serverId) { server in
+            _ = try await server.selectMailbox(mailbox)
+
+            switch operationValue {
+            case "add":
+                try await server.store(flags: parsedFlags, on: set, operation: .add)
+                return "Added flags [\(flagLabel)] on \(set.count) message(s)."
+            case "remove":
+                try await server.store(flags: parsedFlags, on: set, operation: .remove)
+                return "Removed flags [\(flagLabel)] on \(set.count) message(s)."
+            default:
+                throw PostServerError.invalidFlagOperation(operation)
+            }
+        }
+    }
+
     /// Moves messages to the trash folder
     /// - Parameter serverId: The server identifier
     /// - Parameter uids: Comma-separated UIDs
@@ -446,6 +536,32 @@ public actor PostServer {
             _ = try await server.selectMailbox(mailbox)
             try await server.markAsJunk(messages: set)
             return "Marked \(set.count) message(s) as junk."
+        }
+    }
+
+    /// Permanently removes deleted messages from a mailbox
+    /// - Parameter serverId: The server identifier
+    /// - Parameter mailbox: Mailbox name (default: "INBOX")
+    @MCPTool
+    public func expungeMessages(serverId: String, mailbox: String = "INBOX") async throws -> String {
+        try await withServer(serverId: serverId) { server in
+            _ = try await server.selectMailbox(mailbox)
+            try await server.expunge()
+            return "Expunged deleted messages from \(mailbox)."
+        }
+    }
+
+    /// Gets quota information for the mailbox quota root
+    /// - Parameter serverId: The server identifier
+    /// - Parameter mailbox: Mailbox name (default: "INBOX")
+    @MCPTool
+    public func getQuota(serverId: String, mailbox: String = "INBOX") async throws -> QuotaInfo {
+        try await withServer(serverId: serverId) { server in
+            let quota = try await server.getQuotaRoot(mailboxName: mailbox)
+            let resources = quota.resources.map {
+                QuotaResourceInfo(name: $0.resourceName, usage: $0.usage, limit: $0.limit)
+            }
+            return QuotaInfo(quotaRoot: quota.quotaRoot, resources: resources)
         }
     }
 
@@ -601,6 +717,40 @@ public actor PostServer {
         }
 
         throw PostServerError.invalidDate(field, value)
+    }
+
+    private func parseFlags(_ value: String) throws -> [Flag] {
+        let parsed = value
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .map(parseFlag)
+
+        guard !parsed.isEmpty else {
+            throw PostServerError.invalidFlags(value)
+        }
+
+        return parsed
+    }
+
+    private func parseFlag(_ value: String) -> Flag {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed.hasPrefix("\\") ? String(trimmed.dropFirst()) : trimmed
+
+        switch normalized.lowercased() {
+        case "seen":
+            return .seen
+        case "answered":
+            return .answered
+        case "flagged":
+            return .flagged
+        case "deleted":
+            return .deleted
+        case "draft":
+            return .draft
+        default:
+            return .custom(normalized)
+        }
     }
 
     private func specialUseDescription(for attributes: Mailbox.Info.Attributes) -> String? {

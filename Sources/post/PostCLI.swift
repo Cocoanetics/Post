@@ -8,7 +8,25 @@ struct PostCLI: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "post",
         abstract: "Post CLI client",
-        subcommands: [Servers.self, List.self, Fetch.self, Folders.self, Search.self, Move.self, Trash.self, Archive.self, Junk.self, Attachment.self, Idle.self]
+        subcommands: [
+            Servers.self,
+            List.self,
+            Fetch.self,
+            Folders.self,
+            Create.self,
+            Status.self,
+            Search.self,
+            Move.self,
+            Copy.self,
+            FlagMessages.self,
+            Trash.self,
+            Archive.self,
+            Junk.self,
+            Expunge.self,
+            Quota.self,
+            Attachment.self,
+            Idle.self
+        ]
     )
 }
 
@@ -93,6 +111,42 @@ extension PostCLI {
         }
     }
 
+    struct Create: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Create a mailbox folder")
+
+        @Argument(help: "Mailbox name")
+        var name: String
+
+        @Option(name: .long, help: "Server identifier")
+        var server: String?
+
+        func run() async throws {
+            try await withClient { client in
+                let serverId = try await resolveServerID(explicit: server, client: client)
+                let result = try await client.createMailbox(serverId: serverId, name: name)
+                print(result)
+            }
+        }
+    }
+
+    struct Status: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Get mailbox status")
+
+        @Option(name: .long, help: "Server identifier")
+        var server: String?
+
+        @Option(name: .long, help: "Mailbox name")
+        var mailbox: String = "INBOX"
+
+        func run() async throws {
+            try await withClient { client in
+                let serverId = try await resolveServerID(explicit: server, client: client)
+                let status = try await client.mailboxStatus(serverId: serverId, mailbox: mailbox)
+                printMailboxStatus(status)
+            }
+        }
+    }
+
     struct Search: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Search messages")
 
@@ -162,6 +216,95 @@ extension PostCLI {
             }
         }
     }
+
+    struct Copy: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Copy messages to another mailbox")
+
+        @Argument(help: "Message UID set (e.g. 1,2,5-9)")
+        var uids: String
+
+        @Argument(help: "Target mailbox")
+        var target: String
+
+        @Option(name: .long, help: "Server identifier")
+        var server: String?
+
+        @Option(name: .long, help: "Source mailbox")
+        var mailbox: String = "INBOX"
+
+        func run() async throws {
+            try await withClient { client in
+                let serverId = try await resolveServerID(explicit: server, client: client)
+                let result = try await client.copyMessages(
+                    serverId: serverId,
+                    uids: uids,
+                    targetMailbox: target,
+                    mailbox: mailbox
+                )
+                print(result)
+            }
+        }
+    }
+
+    struct FlagMessages: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "flag",
+            abstract: "Add or remove flags on messages"
+        )
+
+        @Argument(help: "Message UID set (e.g. 1,2,5-9)")
+        var uids: String
+
+        @Option(name: .long, help: "Comma-separated flags to add")
+        var add: String?
+
+        @Option(name: .long, help: "Comma-separated flags to remove")
+        var remove: String?
+
+        @Option(name: .long, help: "Server identifier")
+        var server: String?
+
+        @Option(name: .long, help: "Mailbox name")
+        var mailbox: String = "INBOX"
+
+        func validate() throws {
+            let addValue = add?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let removeValue = remove?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let hasAdd = !(addValue ?? "").isEmpty
+            let hasRemove = !(removeValue ?? "").isEmpty
+
+            if hasAdd == hasRemove {
+                throw ValidationError("Exactly one of --add or --remove is required.")
+            }
+        }
+
+        func run() async throws {
+            let addValue = add?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let removeValue = remove?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let hasAdd = !(addValue ?? "").isEmpty
+            let hasRemove = !(removeValue ?? "").isEmpty
+
+            guard hasAdd != hasRemove else {
+                throw ValidationError("Exactly one of --add or --remove is required.")
+            }
+
+            let operation = hasAdd ? "add" : "remove"
+            let flags = hasAdd ? addValue! : removeValue!
+
+            try await withClient { client in
+                let serverId = try await resolveServerID(explicit: server, client: client)
+                let result = try await client.flagMessages(
+                    serverId: serverId,
+                    uids: uids,
+                    flags: flags,
+                    operation: operation,
+                    mailbox: mailbox
+                )
+                print(result)
+            }
+        }
+    }
+
     struct Trash: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Move messages to trash")
 
@@ -221,6 +364,42 @@ extension PostCLI {
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 let result = try await client.junkMessages(serverId: serverId, uids: uids, mailbox: mailbox)
                 print(result)
+            }
+        }
+    }
+
+    struct Expunge: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Expunge deleted messages")
+
+        @Option(name: .long, help: "Server identifier")
+        var server: String?
+
+        @Option(name: .long, help: "Mailbox name")
+        var mailbox: String = "INBOX"
+
+        func run() async throws {
+            try await withClient { client in
+                let serverId = try await resolveServerID(explicit: server, client: client)
+                let result = try await client.expungeMessages(serverId: serverId, mailbox: mailbox)
+                print(result)
+            }
+        }
+    }
+
+    struct Quota: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Show storage quota")
+
+        @Option(name: .long, help: "Server identifier")
+        var server: String?
+
+        @Option(name: .long, help: "Mailbox name")
+        var mailbox: String = "INBOX"
+
+        func run() async throws {
+            try await withClient { client in
+                let serverId = try await resolveServerID(explicit: server, client: client)
+                let quota = try await client.getQuota(serverId: serverId, mailbox: mailbox)
+                printQuotaInfo(quota)
             }
         }
     }
@@ -443,6 +622,34 @@ private func printMessageDetail(_ message: MessageDetail) {
         print("Attachments:")
         for attachment in message.attachments {
             print("- \(attachment.filename) (\(attachment.contentType))")
+        }
+    }
+}
+
+private func printMailboxStatus(_ status: MailboxStatusInfo) {
+    if let messageCount = status.messageCount {
+        print("Messages: \(messageCount)")
+    }
+    if let recentCount = status.recentCount {
+        print("Recent: \(recentCount)")
+    }
+    if let unseenCount = status.unseenCount {
+        print("Unseen: \(unseenCount)")
+    }
+    if let uidNext = status.uidNext {
+        print("UID Next: \(uidNext)")
+    }
+    if let uidValidity = status.uidValidity {
+        print("UID Validity: \(uidValidity)")
+    }
+}
+
+private func printQuotaInfo(_ quota: QuotaInfo) {
+    for resource in quota.resources {
+        if resource.name.uppercased() == "STORAGE" {
+            print("\(resource.name): \(resource.usage) / \(resource.limit) KB")
+        } else {
+            print("\(resource.name): \(resource.usage) / \(resource.limit)")
         }
     }
 }
