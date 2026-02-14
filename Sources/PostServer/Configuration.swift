@@ -7,7 +7,9 @@ public struct PostConfiguration: Codable, Sendable {
         public let host: String
         public let port: Int
         public let username: String
-        public let password: String
+        /// Password in config (fallback for systems without Keychain).
+        /// Prefer storing credentials via `post credential set` instead.
+        public let password: String?
         public let command: String?
         public let idle: Bool?
         public let idleMailbox: String?
@@ -18,7 +20,7 @@ public struct PostConfiguration: Codable, Sendable {
             host: String,
             port: Int,
             username: String,
-            password: String,
+            password: String? = nil,
             command: String? = nil,
             idle: Bool? = nil,
             idleMailbox: String? = nil
@@ -32,6 +34,22 @@ public struct PostConfiguration: Codable, Sendable {
             self.command = command
             self.idle = idle
             self.idleMailbox = idleMailbox
+        }
+
+        /// Resolves the password: Keychain first, then config fallback.
+        public func resolvePassword() throws -> String {
+            #if canImport(Security)
+            let store = KeychainCredentialStore()
+            if let keychainPassword = try store.password(host: host, port: port, username: username) {
+                return keychainPassword
+            }
+            #endif
+
+            if let password, !password.isEmpty {
+                return password
+            }
+
+            throw PostConfigurationError.noPassword(server: id)
         }
     }
 
@@ -76,6 +94,7 @@ public enum PostConfigurationError: Error, LocalizedError, Sendable {
     case missingConfiguration(URL)
     case noServersConfigured
     case unknownServer(String)
+    case noPassword(server: String)
 
     public var errorDescription: String? {
         switch self {
@@ -85,6 +104,8 @@ public enum PostConfigurationError: Error, LocalizedError, Sendable {
             return "No IMAP servers configured in ~/.post.json."
         case .unknownServer(let id):
             return "Unknown server ID '\(id)'."
+        case .noPassword(let server):
+            return "No password found for server '\(server)'. Use `post credential set --server \(server)` or add password to config."
         }
     }
 }

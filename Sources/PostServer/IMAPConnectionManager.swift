@@ -82,6 +82,7 @@ public actor IMAPConnectionManager {
 
     private func connect(_ server: IMAPServer, using config: PostConfiguration.IMAPServerConfiguration) async throws {
         try await server.connect()
-        try await server.login(username: config.username, password: config.password)
+        let password = try config.resolvePassword()
+        try await server.login(username: config.username, password: password)
     }
 }

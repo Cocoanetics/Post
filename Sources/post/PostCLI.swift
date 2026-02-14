@@ -26,7 +26,8 @@ struct PostCLI: AsyncParsableCommand {
             Expunge.self,
             Quota.self,
             Attachment.self,
-            Idle.self
+            Idle.self,
+            Credential.self
         ]
     )
 }
@@ -525,6 +526,126 @@ extension PostCLI {
             try process.run()
         }
     }
+
+    struct Credential: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Manage IMAP credentials in the Keychain",
+            subcommands: [Set.self, Delete.self, List.self]
+        )
+
+        struct Set: ParsableCommand {
+            static let configuration = CommandConfiguration(
+                commandName: "set",
+                abstract: "Store IMAP credentials in the Keychain"
+            )
+
+            @Option(name: .long, help: "Server identifier from config")
+            var server: String
+
+            func run() throws {
+                #if canImport(Security)
+                let config = try PostConfiguration.load()
+                guard let serverConfig = config.server(withID: server) else {
+                    throw PostConfigurationError.unknownServer(server)
+                }
+
+                print("Storing credentials for \(serverConfig.username)@\(serverConfig.host):\(serverConfig.port)")
+                print("Password: ", terminator: "")
+
+                // Read password without echo
+                let password = readPassword()
+                guard !password.isEmpty else {
+                    print("Password cannot be empty.")
+                    throw ExitCode.failure
+                }
+
+                let store = KeychainCredentialStore()
+                try store.store(
+                    host: serverConfig.host,
+                    port: serverConfig.port,
+                    username: serverConfig.username,
+                    password: password
+                )
+                print("Credential stored in \(KeychainCredentialStore.defaultPath.lastPathComponent).")
+                #else
+                print("Keychain is not available on this platform.")
+                throw ExitCode.failure
+                #endif
+            }
+        }
+
+        struct Delete: ParsableCommand {
+            static let configuration = CommandConfiguration(
+                commandName: "delete",
+                abstract: "Remove IMAP credentials from the Keychain"
+            )
+
+            @Option(name: .long, help: "Server identifier from config")
+            var server: String
+
+            func run() throws {
+                #if canImport(Security)
+                let config = try PostConfiguration.load()
+                guard let serverConfig = config.server(withID: server) else {
+                    throw PostConfigurationError.unknownServer(server)
+                }
+
+                let store = KeychainCredentialStore()
+                try store.delete(
+                    host: serverConfig.host,
+                    port: serverConfig.port,
+                    username: serverConfig.username
+                )
+                print("Credential deleted.")
+                #else
+                print("Keychain is not available on this platform.")
+                throw ExitCode.failure
+                #endif
+            }
+        }
+
+        struct List: ParsableCommand {
+            static let configuration = CommandConfiguration(
+                commandName: "list",
+                abstract: "List stored IMAP credentials"
+            )
+
+            func run() throws {
+                #if canImport(Security)
+                let store = KeychainCredentialStore()
+                let credentials = try store.list()
+
+                if credentials.isEmpty {
+                    print("No credentials stored.")
+                    return
+                }
+
+                for cred in credentials {
+                    print("\(cred.username)@\(cred.host):\(cred.port)")
+                }
+                #else
+                print("Keychain is not available on this platform.")
+                throw ExitCode.failure
+                #endif
+            }
+        }
+    }
+}
+
+/// Reads a password from stdin with echo disabled.
+private func readPassword() -> String {
+    #if canImport(Darwin)
+    var oldTermios = termios()
+    tcgetattr(STDIN_FILENO, &oldTermios)
+    var newTermios = oldTermios
+    newTermios.c_lflag &= ~UInt(ECHO)
+    tcsetattr(STDIN_FILENO, TCSANOW, &newTermios)
+    defer {
+        tcsetattr(STDIN_FILENO, TCSANOW, &oldTermios)
+        print() // newline after hidden input
+    }
+    #endif
+    return (readLine(strippingNewline: true) ?? "")
 }
 
 private enum PostCLIError: Error, LocalizedError {
