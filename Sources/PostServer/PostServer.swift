@@ -43,7 +43,7 @@ public enum PostServerError: Error, LocalizedError, Sendable {
 
 @MCPServer(name: "Post", generateClient: true)
 public actor PostServer {
-    private let connectionManager: IMAPConnectionManager
+    private var connectionManager: IMAPConnectionManager
     private let logger = Logger(label: "com.cocoanetics.Post.PostServer")
 
     private var idleWatchTasks: [String: Task<Void, Never>] = [:]
@@ -84,8 +84,9 @@ public actor PostServer {
 
             stderr("Starting IDLE watch for server=\(info.id) mailbox=\(mailbox) command=\(command ?? "<nil>")")
             logger.info("Starting IDLE watch for server=\(info.id) mailbox=\(mailbox)")
-            idleWatchTasks[info.id] = Task { [serverId = info.id] in
-                await self.runIdleWatch(serverId: serverId, mailbox: mailbox, command: command)
+            let manager = connectionManager
+            idleWatchTasks[info.id] = Task.detached { [serverId = info.id] in
+                await Self.runIdleWatch(serverId: serverId, mailbox: mailbox, command: command, connectionManager: manager)
             }
         }
     }
@@ -240,29 +241,47 @@ public actor PostServer {
     }
 
     public func shutdown() async {
+        stopIdleWatches()
         await connectionManager.shutdown()
     }
 
-    /// Lists all configured IMAP servers with their IDs and names
+    /// Reloads configuration from disk, restarts IDLE watches and connections.
+    public func reloadConfiguration() async {
+        stderr("Reloading configuration...")
+
+        do {
+            let newConfig = try PostConfiguration.load()
+
+            // Stop all IDLE watches
+            stopIdleWatches()
+
+            // Shut down existing connections
+            await connectionManager.shutdown()
+
+            // Replace connection manager with new config
+            connectionManager = IMAPConnectionManager(configuration: newConfig)
+
+            stderr("Configuration reloaded. \(newConfig.servers.count) server(s) configured.")
+
+            // Restart IDLE watches
+            await startIdleWatches()
+        } catch {
+            stderr("Failed to reload configuration: \(error.localizedDescription)")
+        }
+    }
+
+    private func stopIdleWatches() {
+        for (id, task) in idleWatchTasks {
+            task.cancel()
+            stderr("Stopped IDLE watch for server=\(id)")
+        }
+        idleWatchTasks.removeAll()
+    }
+
+    /// Lists all configured IMAP servers with IDs and resolved connection info.
     @MCPTool
     public func listServers() async -> [ServerInfo] {
-        var results: [ServerInfo] = []
-        let infos = await connectionManager.serverInfos()
-        
-        for info in infos {
-            if let config = try? await connectionManager.resolveServerConfiguration(serverId: info.id) {
-                results.append(ServerInfo(
-                    id: info.id,
-                    name: info.name,
-                    host: info.host,
-                    command: config.command
-                ))
-            } else {
-                results.append(info)
-            }
-        }
-        
-        return results
+        await connectionManager.serverInfos()
     }
 
     /// Lists emails in a mailbox on the specified server

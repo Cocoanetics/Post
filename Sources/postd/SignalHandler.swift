@@ -1,6 +1,7 @@
 import Darwin
 import Dispatch
 import Foundation
+import PostServer
 import SwiftMCP
 
 public final class SignalHandler {
@@ -8,14 +9,17 @@ public final class SignalHandler {
         private var sources: [DispatchSourceSignal] = []
         private var isShuttingDown = false
         private var transports: [any Transport]
+        private var server: PostServer?
 
-        init(transports: [any Transport]) {
+        init(transports: [any Transport], server: PostServer?) {
             self.transports = transports
+            self.server = server
         }
 
         func setup(on queue: DispatchQueue) {
             install(signal: SIGINT, on: queue)
             install(signal: SIGTERM, on: queue)
+            install(signal: SIGHUP, on: queue)
         }
 
         private func install(signal signalValue: Int32, on queue: DispatchQueue) {
@@ -35,6 +39,12 @@ public final class SignalHandler {
         }
 
         private func handle(signal signalValue: Int32) async {
+            if signalValue == SIGHUP {
+                logToStderr("Received SIGHUP, reloading configuration...")
+                await server?.reloadConfiguration()
+                return
+            }
+
             guard !isShuttingDown else {
                 return
             }
@@ -55,8 +65,8 @@ public final class SignalHandler {
 
     private let state: State
 
-    public init(transports: [any Transport]) {
-        self.state = State(transports: transports)
+    public init(transports: [any Transport], server: PostServer? = nil) {
+        self.state = State(transports: transports, server: server)
     }
 
     public func setup() async {

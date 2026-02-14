@@ -1,64 +1,77 @@
 import Foundation
 
 public struct PostConfiguration: Codable, Sendable {
-    public struct IMAPServerConfiguration: Codable, Sendable {
-        public let id: String
-        public let name: String
-        public let host: String
-        public let port: Int
-        public let username: String
-        /// Password in config (fallback for systems without Keychain).
-        /// Prefer storing credentials via `post credential set` instead.
-        public let password: String?
+    public struct ServerConfiguration: Codable, Sendable {
+        public struct Credentials: Codable, Sendable {
+            public let host: String
+            public let port: Int
+            public let username: String
+            public let password: String
+
+            public init(host: String, port: Int, username: String, password: String) {
+                self.host = host
+                self.port = port
+                self.username = username
+                self.password = password
+            }
+        }
+
         public let command: String?
         public let idle: Bool?
         public let idleMailbox: String?
+        public let credentials: Credentials?
 
-        public init(
-            id: String,
-            name: String,
-            host: String,
-            port: Int,
-            username: String,
-            password: String? = nil,
-            command: String? = nil,
-            idle: Bool? = nil,
-            idleMailbox: String? = nil
-        ) {
-            self.id = id
-            self.name = name
+        public init(command: String? = nil, idle: Bool? = nil, idleMailbox: String? = nil, credentials: Credentials? = nil) {
+            self.command = command
+            self.idle = idle
+            self.idleMailbox = idleMailbox
+            self.credentials = credentials
+        }
+    }
+
+    public struct ResolvedCredentials: Sendable {
+        public let host: String
+        public let port: Int
+        public let username: String
+        public let password: String
+
+        public init(host: String, port: Int, username: String, password: String) {
             self.host = host
             self.port = port
             self.username = username
             self.password = password
-            self.command = command
-            self.idle = idle
-            self.idleMailbox = idleMailbox
-        }
-
-        /// Resolves the password: Keychain first, then config fallback.
-        public func resolvePassword() throws -> String {
-            #if canImport(Security)
-            let store = KeychainCredentialStore()
-            if let keychainPassword = try store.password(host: host, port: port, username: username) {
-                return keychainPassword
-            }
-            #endif
-
-            if let password, !password.isEmpty {
-                return password
-            }
-
-            throw PostConfigurationError.noPassword(server: id)
         }
     }
 
-    public let servers: [IMAPServerConfiguration]
+    public let servers: [String: ServerConfiguration]
     public let httpPort: Int?
 
-    public init(servers: [IMAPServerConfiguration], httpPort: Int?) {
+    public init(servers: [String: ServerConfiguration], httpPort: Int?) {
         self.servers = servers
         self.httpPort = httpPort
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case servers
+        case httpPort
+    }
+
+    private struct LegacyIMAPServerConfiguration: Decodable {
+        let id: String
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        httpPort = try container.decodeIfPresent(Int.self, forKey: .httpPort)
+
+        do {
+            servers = try container.decode([String: ServerConfiguration].self, forKey: .servers)
+        } catch {
+            if let legacyServers = try? container.decode([LegacyIMAPServerConfiguration].self, forKey: .servers) {
+                throw PostConfigurationError.legacyServerArrayFormatDetected(ids: legacyServers.map(\.id))
+            }
+            throw error
+        }
     }
 
     public static var defaultFileURL: URL {
@@ -81,12 +94,41 @@ public struct PostConfiguration: Codable, Sendable {
         return config
     }
 
-    public func server(withID id: String) -> IMAPServerConfiguration? {
-        servers.first { $0.id == id }
+    public func server(withID id: String) -> ServerConfiguration? {
+        servers[id]
     }
 
     public var defaultServerID: String? {
-        servers.first?.id
+        servers.keys.sorted().first
+    }
+
+    public func resolveCredentials(forServer id: String) throws -> ResolvedCredentials {
+        guard let server = server(withID: id) else {
+            throw PostConfigurationError.unknownServer(id)
+        }
+
+        #if canImport(Security)
+        let store = KeychainCredentialStore()
+        if let keychainEntry = try store.fullCredentials(forLabel: id) {
+            return ResolvedCredentials(
+                host: keychainEntry.credential.host,
+                port: keychainEntry.credential.port,
+                username: keychainEntry.credential.username,
+                password: keychainEntry.password
+            )
+        }
+        #endif
+
+        if let inline = server.credentials, !inline.password.isEmpty {
+            return ResolvedCredentials(
+                host: inline.host,
+                port: inline.port,
+                username: inline.username,
+                password: inline.password
+            )
+        }
+
+        throw PostConfigurationError.noCredentials(server: id)
     }
 }
 
@@ -94,7 +136,8 @@ public enum PostConfigurationError: Error, LocalizedError, Sendable {
     case missingConfiguration(URL)
     case noServersConfigured
     case unknownServer(String)
-    case noPassword(server: String)
+    case noCredentials(server: String)
+    case legacyServerArrayFormatDetected(ids: [String])
 
     public var errorDescription: String? {
         switch self {
@@ -104,8 +147,23 @@ public enum PostConfigurationError: Error, LocalizedError, Sendable {
             return "No IMAP servers configured in ~/.post.json."
         case .unknownServer(let id):
             return "Unknown server ID '\(id)'."
-        case .noPassword(let server):
-            return "No password found for server '\(server)'. Use `post credential set --server \(server)` or add password to config."
+        case .noCredentials(let server):
+            return "No credentials found for server '\(server)'. Use `post credential set --server \(server)` or add servers.\(server).credentials in ~/.post.json."
+        case .legacyServerArrayFormatDetected(let ids):
+            let listedIDs = ids.isEmpty ? "<none>" : ids.joined(separator: ", ")
+            return """
+            Detected legacy server format in ~/.post.json (`servers` as an array, IDs: \(listedIDs)).
+            Please migrate to dictionary format:
+            {
+              "servers": {
+                "<server-id>": {
+                  "idle": true,
+                  "idleMailbox": "INBOX",
+                  "command": "/path/to/script.sh"
+                }
+              }
+            }
+            """
         }
     }
 }

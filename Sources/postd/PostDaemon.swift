@@ -10,7 +10,7 @@ struct PostDaemon: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "postd",
         abstract: "Post IMAP daemon",
-        subcommands: [Start.self, Stop.self, Status.self],
+        subcommands: [Start.self, Stop.self, Reload.self, Status.self],
         defaultSubcommand: Start.self
     )
 }
@@ -84,7 +84,7 @@ extension PostDaemon {
                     await server.startIdleWatches()
                 }
 
-                let signalHandler = SignalHandler(transports: transports)
+                let signalHandler = SignalHandler(transports: transports, server: server)
                 await signalHandler.setup()
 
                 try await tcpTransport.run()
@@ -137,6 +137,29 @@ extension PostDaemon {
                 try PIDFileManager.removePIDFile()
                 logToStderr("postd stopped.")
             }
+        }
+    }
+
+    struct Reload: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Reload configuration (send SIGHUP)")
+
+        func run() async throws {
+            guard let pid = try PIDFileManager.readPID() else {
+                logToStderr("postd is not running (no PID file).")
+                throw ExitCode.failure
+            }
+
+            guard PIDFileManager.isProcessRunning(pid) else {
+                logToStderr("Stale PID file found for PID \(pid).")
+                try PIDFileManager.removePIDFile()
+                throw ExitCode.failure
+            }
+
+            guard kill(pid, SIGHUP) == 0 else {
+                throw ValidationError("Failed to send SIGHUP to PID \(pid): \(String(cString: strerror(errno)))")
+            }
+
+            logToStderr("Sent SIGHUP to postd (PID \(pid)). Configuration will be reloaded.")
         }
     }
 

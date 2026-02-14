@@ -539,34 +539,72 @@ extension PostCLI {
                 abstract: "Store IMAP credentials in the Keychain"
             )
 
-            @Option(name: .long, help: "Server identifier from config")
+            @Option(name: .long, help: "Server identifier")
             var server: String
+
+            @Option(name: .long, help: "IMAP host")
+            var host: String?
+
+            @Option(name: .long, help: "IMAP port")
+            var port: Int?
+
+            @Option(name: .long, help: "IMAP username")
+            var username: String?
+
+            @Option(name: .long, help: "IMAP password")
+            var password: String?
 
             func run() throws {
                 #if canImport(Security)
-                let config = try PostConfiguration.load()
-                guard let serverConfig = config.server(withID: server) else {
+                let config = try? PostConfiguration.load()
+                if let config, config.server(withID: server) == nil {
                     throw PostConfigurationError.unknownServer(server)
                 }
 
-                print("Storing credentials for \(serverConfig.username)@\(serverConfig.host):\(serverConfig.port)")
-                print("Password: ", terminator: "")
+                let fallbackCredentials = config?.server(withID: server)?.credentials
+                let resolvedHost = try resolveRequiredValue(
+                    explicit: host,
+                    fallback: fallbackCredentials?.host,
+                    prompt: "Host"
+                )
 
-                // Read password without echo
-                let password = readPassword()
-                guard !password.isEmpty else {
+                let resolvedPort = try resolvePort(
+                    explicit: port,
+                    fallback: fallbackCredentials?.port,
+                    prompt: "Port",
+                    defaultValue: 993
+                )
+
+                let resolvedUsername = try resolveRequiredValue(
+                    explicit: username,
+                    fallback: fallbackCredentials?.username,
+                    prompt: "Username"
+                )
+
+                let resolvedPassword: String
+                if let explicitPassword = password?.trimmingCharacters(in: .whitespacesAndNewlines), !explicitPassword.isEmpty {
+                    resolvedPassword = explicitPassword
+                } else if let fallbackPassword = fallbackCredentials?.password, !fallbackPassword.isEmpty {
+                    resolvedPassword = fallbackPassword
+                } else {
+                    print("Password: ", terminator: "")
+                    resolvedPassword = readPassword()
+                }
+
+                guard !resolvedPassword.isEmpty else {
                     print("Password cannot be empty.")
                     throw ExitCode.failure
                 }
 
                 let store = KeychainCredentialStore()
                 try store.store(
-                    host: serverConfig.host,
-                    port: serverConfig.port,
-                    username: serverConfig.username,
-                    password: password
+                    id: server,
+                    host: resolvedHost,
+                    port: resolvedPort,
+                    username: resolvedUsername,
+                    password: resolvedPassword
                 )
-                print("Credential stored in \(KeychainCredentialStore.defaultPath.lastPathComponent).")
+                print("Credential stored for server '\(server)' in \(KeychainCredentialStore.defaultPath.lastPathComponent).")
                 #else
                 print("Keychain is not available on this platform.")
                 throw ExitCode.failure
@@ -580,22 +618,13 @@ extension PostCLI {
                 abstract: "Remove IMAP credentials from the Keychain"
             )
 
-            @Option(name: .long, help: "Server identifier from config")
+            @Option(name: .long, help: "Server identifier")
             var server: String
 
             func run() throws {
                 #if canImport(Security)
-                let config = try PostConfiguration.load()
-                guard let serverConfig = config.server(withID: server) else {
-                    throw PostConfigurationError.unknownServer(server)
-                }
-
                 let store = KeychainCredentialStore()
-                try store.delete(
-                    host: serverConfig.host,
-                    port: serverConfig.port,
-                    username: serverConfig.username
-                )
+                try store.delete(label: server)
                 print("Credential deleted.")
                 #else
                 print("Keychain is not available on this platform.")
@@ -620,8 +649,14 @@ extension PostCLI {
                     return
                 }
 
+                let idWidth = max("ID".count, credentials.map { $0.id.count }.max() ?? 0)
+                let userWidth = max("Username".count, credentials.map { $0.username.count }.max() ?? 0)
+
+                print("\(pad("ID", to: idWidth))  \(pad("Username", to: userWidth))  Host")
+                print("\(String(repeating: "-", count: idWidth))  \(String(repeating: "-", count: userWidth))  \(String(repeating: "-", count: 4))")
+
                 for cred in credentials {
-                    print("\(cred.username)@\(cred.host):\(cred.port)")
+                    print("\(pad(cred.id, to: idWidth))  \(pad(cred.username, to: userWidth))  \(cred.host):\(cred.port)")
                 }
                 #else
                 print("Keychain is not available on this platform.")
@@ -646,6 +681,47 @@ private func readPassword() -> String {
     }
     #endif
     return (readLine(strippingNewline: true) ?? "")
+}
+
+private func resolveRequiredValue(explicit: String?, fallback: String?, prompt: String) throws -> String {
+    if let explicit = explicit?.trimmingCharacters(in: .whitespacesAndNewlines), !explicit.isEmpty {
+        return explicit
+    }
+
+    if let fallback = fallback?.trimmingCharacters(in: .whitespacesAndNewlines), !fallback.isEmpty {
+        return fallback
+    }
+
+    print("\(prompt): ", terminator: "")
+    let value = (readLine(strippingNewline: true) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !value.isEmpty else {
+        print("\(prompt) cannot be empty.")
+        throw ExitCode.failure
+    }
+    return value
+}
+
+private func resolvePort(explicit: Int?, fallback: Int?, prompt: String, defaultValue: Int) throws -> Int {
+    if let explicit {
+        return explicit
+    }
+
+    if let fallback {
+        return fallback
+    }
+
+    print("\(prompt) [\(defaultValue)]: ", terminator: "")
+    let raw = (readLine(strippingNewline: true) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    if raw.isEmpty {
+        return defaultValue
+    }
+
+    guard let value = Int(raw) else {
+        print("Invalid \(prompt.lowercased()).")
+        throw ExitCode.failure
+    }
+
+    return value
 }
 
 private enum PostCLIError: Error, LocalizedError {
@@ -694,13 +770,23 @@ private func printServersTable(_ servers: [ServerInfo]) {
     }
 
     let idWidth = max("ID".count, servers.map { $0.id.count }.max() ?? 0)
-    let nameWidth = max("Name".count, servers.map { $0.name.count }.max() ?? 0)
+    let userWidth = max("Username".count, servers.map { ($0.username ?? "<unresolved>").count }.max() ?? 0)
 
-    print("\(pad("ID", to: idWidth))  \(pad("Name", to: nameWidth))  Host")
-    print("\(String(repeating: "-", count: idWidth))  \(String(repeating: "-", count: nameWidth))  \(String(repeating: "-", count: 4))")
+    print("\(pad("ID", to: idWidth))  \(pad("Username", to: userWidth))  Host")
+    print("\(String(repeating: "-", count: idWidth))  \(String(repeating: "-", count: userWidth))  \(String(repeating: "-", count: 4))")
 
     for server in servers {
-        print("\(pad(server.id, to: idWidth))  \(pad(server.name, to: nameWidth))  \(server.host)")
+        let host: String
+        if let resolvedHost = server.host, let resolvedPort = server.port {
+            host = "\(resolvedHost):\(resolvedPort)"
+        } else if let resolvedHost = server.host {
+            host = resolvedHost
+        } else {
+            host = "<unresolved>"
+        }
+
+        let username = server.username ?? "<unresolved>"
+        print("\(pad(server.id, to: idWidth))  \(pad(username, to: userWidth))  \(host)")
     }
 }
 

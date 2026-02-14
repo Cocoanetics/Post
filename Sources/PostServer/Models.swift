@@ -5,14 +5,16 @@ import SwiftTextHTML
 @Schema
 public struct ServerInfo: Codable, Sendable {
     public let id: String
-    public let name: String
-    public let host: String
+    public let host: String?
+    public let port: Int?
+    public let username: String?
     public let command: String?
 
-    public init(id: String, name: String, host: String, command: String? = nil) {
+    public init(id: String, host: String?, port: Int?, username: String?, command: String? = nil) {
         self.id = id
-        self.name = name
         self.host = host
+        self.port = port
+        self.username = username
         self.command = command
     }
 }

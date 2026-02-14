@@ -1,12 +1,13 @@
 #if canImport(Security)
 import Foundation
 import Security
+import CommonCrypto
 
 /// Manages IMAP credentials in a dedicated keychain file.
 ///
 /// Uses `kSecClassInternetPassword` entries with native attributes
-/// (server, port, account, protocol). The keychain file is unlocked
-/// with a passphrase derived from the machine's hardware UUID.
+/// (server, port, account, protocol, label). The keychain file is
+/// unlocked with a passphrase derived from the machine's hardware UUID.
 public final class KeychainCredentialStore: Sendable {
     /// Default keychain file path next to config
     public static let defaultPath = FileManager.default.homeDirectoryForCurrentUser
@@ -20,36 +21,29 @@ public final class KeychainCredentialStore: Sendable {
 
     // MARK: - Public API
 
-    /// Stores or updates IMAP credentials for a server.
-    public func store(host: String, port: Int, username: String, password: String) throws {
+    /// Stores or updates IMAP credentials for a server ID.
+    public func store(id: String, host: String, port: Int, username: String, password: String) throws {
         let keychain = try openOrCreate()
-        defer { SecKeychainLock(keychain) }
+        let protocolAttr = protocolAttribute(for: port)
 
-        // Try to update existing
-        if let existing = try? findItem(in: keychain, host: host, port: port, username: username) {
-            let update: [String: Any] = [
-                kSecValueData as String: password.data(using: .utf8)!
-            ]
-            let status = SecItemUpdate(
-                [kSecMatchItemList as String: [existing]] as CFDictionary,
-                update as CFDictionary
-            )
-            guard status == errSecSuccess else {
-                throw KeychainError.operationFailed(status, "update")
-            }
-            return
+        // Delete existing if present, then re-add
+        if try findItem(in: keychain, label: id) != nil {
+            try deleteItem(in: keychain, label: id)
         }
 
-        // Create new
+        let access = try createTrustedAccess(forLabel: id)
+
         let attrs: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
             kSecUseKeychain as String: keychain,
             kSecAttrServer as String: host,
             kSecAttrPort as String: port,
             kSecAttrAccount as String: username,
-            kSecAttrProtocol as String: kSecAttrProtocolIMAPS,
-            kSecAttrLabel as String: "\(username) (\(host))",
-            kSecValueData as String: password.data(using: .utf8)!
+            kSecAttrProtocol as String: protocolAttr,
+            kSecAttrLabel as String: id,
+            kSecAttrDescription as String: "Post IMAP",
+            kSecAttrAccess as String: access,
+            kSecValueData as String: password.data(using: .utf8) ?? Data()
         ]
         let status = SecItemAdd(attrs as CFDictionary, nil)
         guard status == errSecSuccess else {
@@ -57,45 +51,50 @@ public final class KeychainCredentialStore: Sendable {
         }
     }
 
-    /// Retrieves the password for an IMAP server.
-    public func password(host: String, port: Int, username: String) throws -> String? {
+    /// Retrieves a full credential by server ID label, including password.
+    public func fullCredentials(forLabel id: String) throws -> (credential: FullCredential, password: String)? {
         let keychain = try openOrCreate()
-        defer { SecKeychainLock(keychain) }
 
-        guard let item = try? findItem(in: keychain, host: host, port: port, username: username) else {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassInternetPassword,
+            kSecMatchSearchList as String: [keychain],
+            kSecAttrLabel as String: id,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: true
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        if status == errSecItemNotFound {
+            return nil
+        }
+        guard status == errSecSuccess, let attrs = result as? [String: Any] else {
+            throw KeychainError.operationFailed(status, "find")
+        }
+
+        guard let host = attrs[kSecAttrServer as String] as? String,
+              let username = attrs[kSecAttrAccount as String] as? String,
+              let passwordData = attrs[kSecValueData as String] as? Data,
+              let password = String(data: passwordData, encoding: .utf8) else {
             return nil
         }
 
-        var passwordLength: UInt32 = 0
-        var passwordData: UnsafeMutableRawPointer?
-        let status = SecKeychainItemCopyContent(item, nil, nil, &passwordLength, &passwordData)
-        guard status == errSecSuccess, let data = passwordData else {
-            return nil
-        }
-        defer { SecKeychainItemFreeContent(nil, data) }
-
-        return String(bytes: Data(bytes: data, count: Int(passwordLength)), encoding: .utf8)
+        let port = attrs[kSecAttrPort as String] as? Int ?? 993
+        let credential = FullCredential(id: id, host: host, port: port, username: username)
+        return (credential, password)
     }
 
-    /// Deletes the credential for an IMAP server.
-    public func delete(host: String, port: Int, username: String) throws {
+    /// Deletes the credential for a server ID label.
+    public func delete(label: String) throws {
         let keychain = try openOrCreate()
-        defer { SecKeychainLock(keychain) }
-
-        guard let item = try? findItem(in: keychain, host: host, port: port, username: username) else {
-            throw KeychainError.notFound(host: host, username: username)
-        }
-
-        let status = SecKeychainItemDelete(item)
-        guard status == errSecSuccess else {
-            throw KeychainError.operationFailed(status, "delete")
-        }
+        try deleteItem(in: keychain, label: label)
     }
 
-    /// Lists all stored credentials (without passwords).
+    /// Lists all stored Post IMAP credentials (without passwords).
     public func list() throws -> [StoredCredential] {
         let keychain = try openOrCreate()
-        defer { SecKeychainLock(keychain) }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
@@ -119,19 +118,24 @@ public final class KeychainCredentialStore: Sendable {
                   let username = attrs[kSecAttrAccount as String] as? String else {
                 return nil
             }
+            let label = attrs[kSecAttrLabel as String] as? String ?? ""
             let port = attrs[kSecAttrPort as String] as? Int ?? 993
-            return StoredCredential(host: host, port: port, username: username)
+            return StoredCredential(id: label, host: host, port: port, username: username)
         }
-    }
-
-    /// Returns whether the keychain file exists.
-    public var exists: Bool {
-        FileManager.default.fileExists(atPath: path)
+        .sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
     }
 
     // MARK: - Types
 
+    public struct FullCredential: Sendable {
+        public let id: String
+        public let host: String
+        public let port: Int
+        public let username: String
+    }
+
     public struct StoredCredential: Sendable {
+        public let id: String
         public let host: String
         public let port: Int
         public let username: String
@@ -139,15 +143,15 @@ public final class KeychainCredentialStore: Sendable {
 
     public enum KeychainError: Error, LocalizedError {
         case operationFailed(OSStatus, String)
-        case notFound(host: String, username: String)
+        case notFoundLabel(String)
         case hardwareUUIDUnavailable
 
         public var errorDescription: String? {
             switch self {
             case .operationFailed(let status, let operation):
                 return "Keychain \(operation) failed with status \(status)."
-            case .notFound(let host, let username):
-                return "No credential found for \(username)@\(host)."
+            case .notFoundLabel(let label):
+                return "No credential found for server ID '\(label)'."
             case .hardwareUUIDUnavailable:
                 return "Could not determine hardware UUID for keychain passphrase."
             }
@@ -158,16 +162,14 @@ public final class KeychainCredentialStore: Sendable {
 
     private func openOrCreate() throws -> SecKeychain {
         var keychain: SecKeychain?
+        let passphrase = try derivePassphrase()
 
         // Try to open existing
         let openStatus = SecKeychainOpen(path, &keychain)
         if openStatus == errSecSuccess, let keychain {
-            // Check if it's actually valid by trying to get status
             var keychainStatus: SecKeychainStatus = 0
             let statusResult = SecKeychainGetStatus(keychain, &keychainStatus)
             if statusResult == errSecSuccess {
-                // Exists, unlock it
-                let passphrase = try derivePassphrase()
                 let unlockStatus = SecKeychainUnlock(keychain, UInt32(passphrase.count), passphrase, true)
                 if unlockStatus == errSecSuccess {
                     return keychain
@@ -176,23 +178,19 @@ public final class KeychainCredentialStore: Sendable {
         }
 
         // Create new keychain
-        let passphrase = try derivePassphrase()
         let createStatus = SecKeychainCreate(path, UInt32(passphrase.count), passphrase, false, nil, &keychain)
         guard createStatus == errSecSuccess, let keychain else {
             throw KeychainError.operationFailed(createStatus, "create")
         }
 
-        // Don't add to default search list (keep it private)
         return keychain
     }
 
-    private func findItem(in keychain: SecKeychain, host: String, port: Int, username: String) throws -> SecKeychainItem? {
+    private func findItem(in keychain: SecKeychain, label: String) throws -> SecKeychainItem? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
             kSecMatchSearchList as String: [keychain],
-            kSecAttrServer as String: host,
-            kSecAttrPort as String: port,
-            kSecAttrAccount as String: username,
+            kSecAttrLabel as String: label,
             kSecReturnRef as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
@@ -210,15 +208,67 @@ public final class KeychainCredentialStore: Sendable {
         return (result as! SecKeychainItem)
     }
 
+    private func deleteItem(in keychain: SecKeychain, label: String) throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassInternetPassword,
+            kSecMatchSearchList as String: [keychain],
+            kSecAttrLabel as String: label
+        ]
+
+        let status = SecItemDelete(query as CFDictionary)
+        if status == errSecItemNotFound {
+            throw KeychainError.notFoundLabel(label)
+        }
+        guard status == errSecSuccess else {
+            throw KeychainError.operationFailed(status, "delete")
+        }
+    }
+
+    /// Creates a SecAccess that trusts both `post` and `postd` binaries
+    /// so the daemon can read credentials without prompts.
+    private func createTrustedAccess(forLabel label: String) throws -> SecAccess {
+        var trustedApps: [SecTrustedApplication] = []
+
+        // Trust self (current process)
+        var selfApp: SecTrustedApplication?
+        if SecTrustedApplicationCreateFromPath(nil, &selfApp) == errSecSuccess, let selfApp {
+            trustedApps.append(selfApp)
+        }
+
+        // Trust both post and postd from the same build directory
+        if let buildDir = Bundle.main.executableURL?.deletingLastPathComponent() {
+            for binary in ["post", "postd"] {
+                let binaryPath = buildDir.appendingPathComponent(binary).path
+                var app: SecTrustedApplication?
+                if SecTrustedApplicationCreateFromPath(binaryPath, &app) == errSecSuccess, let app {
+                    trustedApps.append(app)
+                }
+            }
+        }
+
+        var access: SecAccess?
+        let status = SecAccessCreate(label as CFString, trustedApps as CFArray, &access)
+        guard status == errSecSuccess, let access else {
+            throw KeychainError.operationFailed(status, "create access")
+        }
+        return access
+    }
+
+    private func protocolAttribute(for port: Int) -> CFString {
+        switch port {
+        case 993: return kSecAttrProtocolIMAPS
+        case 143: return kSecAttrProtocolIMAP
+        default: return kSecAttrProtocolIMAPS
+        }
+    }
+
     /// Derives keychain passphrase from hardware UUID + salt.
     private func derivePassphrase() throws -> String {
         guard let uuid = hardwareUUID() else {
             throw KeychainError.hardwareUUIDUnavailable
         }
-        // SHA256 of UUID + salt
         let input = "post-keychain:\(uuid)"
         let data = Data(input.utf8)
-        // Use CommonCrypto-free approach via insecure hash
         var hash = [UInt8](repeating: 0, count: 32)
         data.withUnsafeBytes { buffer in
             CC_SHA256(buffer.baseAddress, CC_LONG(buffer.count), &hash)
@@ -243,7 +293,4 @@ public final class KeychainCredentialStore: Sendable {
         return uuidCF?.takeRetainedValue() as? String
     }
 }
-
-// CommonCrypto bridge
-import CommonCrypto
 #endif

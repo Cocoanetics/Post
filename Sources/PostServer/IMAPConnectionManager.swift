@@ -12,16 +12,26 @@ public actor IMAPConnectionManager {
     }
 
     public func serverInfos() -> [ServerInfo] {
-        configuration.servers.map {
-            ServerInfo(id: $0.id, name: $0.name, host: $0.host)
-        }
+        configuration.servers
+            .keys
+            .sorted()
+            .map { id in
+                let config = configuration.server(withID: id)
+                return ServerInfo(
+                    id: id,
+                    host: config?.credentials?.host,
+                    port: config?.credentials?.port,
+                    username: config?.credentials?.username,
+                    command: config?.command
+                )
+            }
     }
 
     public func defaultServerID() -> String? {
         configuration.defaultServerID
     }
 
-    public func resolveServerConfiguration(serverId: String) throws -> PostConfiguration.IMAPServerConfiguration {
+    public func resolveServerConfiguration(serverId: String) throws -> PostConfiguration.ServerConfiguration {
         guard let config = configuration.server(withID: serverId) else {
             throw PostConfigurationError.unknownServer(serverId)
         }
@@ -31,7 +41,7 @@ public actor IMAPConnectionManager {
     /// Returns a cached primary IMAPServer instance for the given serverId.
     /// This connection is used for normal commands.
     public func connection(for serverId: String) async throws -> IMAPServer {
-        let config = try resolveServerConfiguration(serverId: serverId)
+        let resolved = try configuration.resolveCredentials(forServer: serverId)
 
         if let existing = connections[serverId] {
             if await existing.isConnected {
@@ -39,7 +49,7 @@ public actor IMAPConnectionManager {
             }
 
             do {
-                try await connect(existing, using: config)
+                try await connect(existing, using: resolved)
                 return existing
             } catch {
                 logger.warning("Reconnection failed for \(serverId): \(String(describing: error))")
@@ -48,9 +58,9 @@ public actor IMAPConnectionManager {
             }
         }
 
-        let server = IMAPServer(host: config.host, port: config.port)
+        let server = IMAPServer(host: resolved.host, port: resolved.port)
         do {
-            try await connect(server, using: config)
+            try await connect(server, using: resolved)
             connections[serverId] = server
             return server
         } catch {
@@ -80,9 +90,8 @@ public actor IMAPConnectionManager {
         }
     }
 
-    private func connect(_ server: IMAPServer, using config: PostConfiguration.IMAPServerConfiguration) async throws {
+    private func connect(_ server: IMAPServer, using credentials: PostConfiguration.ResolvedCredentials) async throws {
         try await server.connect()
-        let password = try config.resolvePassword()
-        try await server.login(username: config.username, password: password)
+        try await server.login(username: credentials.username, password: credentials.password)
     }
 }
