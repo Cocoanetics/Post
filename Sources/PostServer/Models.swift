@@ -1,16 +1,19 @@
 import Foundation
 import SwiftMCP
+import SwiftTextHTML
 
 @Schema
 public struct ServerInfo: Codable, Sendable {
     public let id: String
     public let name: String
     public let host: String
+    public let command: String?
 
-    public init(id: String, name: String, host: String) {
+    public init(id: String, name: String, host: String, command: String? = nil) {
         self.id = id
         self.name = name
         self.host = host
+        self.command = command
     }
 }
 
@@ -58,6 +61,23 @@ public struct MessageDetail: Codable, Sendable {
         self.textBody = textBody
         self.htmlBody = htmlBody
         self.attachments = attachments
+    }
+}
+
+extension MessageDetail {
+    /// Returns the message body as markdown.
+    /// Converts HTML to markdown when available, falls back to plain text.
+    public func markdown() async throws -> String {
+        if let htmlBody, !htmlBody.isEmpty {
+            let converter = HTMLToMarkdown(data: Data(htmlBody.utf8))
+            return try await converter.markdown()
+        }
+
+        if let textBody, !textBody.isEmpty {
+            return textBody
+        }
+
+        return ""
     }
 }
 

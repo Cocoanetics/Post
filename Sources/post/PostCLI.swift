@@ -274,10 +274,22 @@ extension PostCLI {
         @Option(name: .long, help: "Poll interval in seconds")
         var interval: Int = 10
 
+        @Option(name: .long, help: "Command to execute on new message (supports {uid}, {from}, {subject}, {date})")
+        var exec: String?
+
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 print("Watching \(mailbox) on \(serverId) (poll every \(interval)s, Ctrl+C to stop)...")
+
+                // Resolve command from flag or server config
+                let servers = try await client.listServers()
+                let configCommand = servers.first(where: { $0.id == serverId })?.command
+                let activeCommand = exec ?? configCommand
+
+                if let cmd = activeCommand {
+                    print("Action: \(cmd)")
+                }
 
                 var knownUIDs: Set<Int> = []
 
@@ -297,10 +309,40 @@ extension PostCLI {
                             knownUIDs.insert(msg.uid)
                             print("🔔 New: [\(msg.uid)] \(msg.date) - \(msg.from)")
                             print("   \(msg.subject)")
+
+                            if let execCommand = activeCommand {
+                                try await executeCommand(execCommand, message: msg)
+                            }
                         }
                     }
                 }
             }
+        }
+
+        private func executeCommand(_ command: String, message: MessageHeader) async throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            
+            // Pass data via environment variables for safety
+            var env = ProcessInfo.processInfo.environment
+            env["POST_UID"] = String(message.uid)
+            env["POST_FROM"] = message.from
+            env["POST_SUBJECT"] = message.subject
+            env["POST_DATE"] = message.date
+            process.environment = env
+            
+            // Replace placeholders with environment variable references
+            let safeCommand = command
+                .replacingOccurrences(of: "{uid}", with: "$POST_UID")
+                .replacingOccurrences(of: "{from}", with: "$POST_FROM")
+                .replacingOccurrences(of: "{subject}", with: "$POST_SUBJECT")
+                .replacingOccurrences(of: "{date}", with: "$POST_DATE")
+
+            print("Executing: \(safeCommand)")
+            
+            process.arguments = ["-c", safeCommand]
+            
+            try process.run()
         }
     }
 }

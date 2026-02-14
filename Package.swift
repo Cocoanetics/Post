@@ -23,6 +23,7 @@ let package = Package(
     dependencies: [
         .package(path: "../SwiftMCP"),
         .package(path: "../SwiftMail"),
+        .package(path: "../SwiftText"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0")
     ],
@@ -32,6 +33,7 @@ let package = Package(
             dependencies: [
                 .product(name: "SwiftMCP", package: "SwiftMCP"),
                 .product(name: "SwiftMail", package: "SwiftMail"),
+                .product(name: "SwiftTextHTML", package: "SwiftText"),
                 .product(name: "Logging", package: "swift-log")
             ]
         ),

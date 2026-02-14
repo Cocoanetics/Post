@@ -28,6 +28,8 @@ public actor IMAPConnectionManager {
         return config
     }
 
+    /// Returns a cached primary IMAPServer instance for the given serverId.
+    /// This connection is used for normal commands.
     public func connection(for serverId: String) async throws -> IMAPServer {
         let config = try resolveServerConfiguration(serverId: serverId)
 

@@ -8,14 +8,30 @@ public struct PostConfiguration: Codable, Sendable {
         public let port: Int
         public let username: String
         public let password: String
+        public let command: String?
+        public let idle: Bool?
+        public let idleMailbox: String?
 
-        public init(id: String, name: String, host: String, port: Int, username: String, password: String) {
+        public init(
+            id: String,
+            name: String,
+            host: String,
+            port: Int,
+            username: String,
+            password: String,
+            command: String? = nil,
+            idle: Bool? = nil,
+            idleMailbox: String? = nil
+        ) {
             self.id = id
             self.name = name
             self.host = host
             self.port = port
             self.username = username
             self.password = password
+            self.command = command
+            self.idle = idle
+            self.idleMailbox = idleMailbox
         }
     }
 

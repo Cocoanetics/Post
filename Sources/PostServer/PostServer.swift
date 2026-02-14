@@ -40,8 +40,197 @@ public actor PostServer {
     private let connectionManager: IMAPConnectionManager
     private let logger = Logger(label: "com.cocoanetics.Post.PostServer")
 
+    private var idleWatchTasks: [String: Task<Void, Never>] = [:]
+
+    private nonisolated func stderr(_ message: String) {
+        if let data = ("[postd] \(message)\n").data(using: .utf8) {
+            try? FileHandle.standardError.write(contentsOf: data)
+        }
+    }
+
     public init(configuration: PostConfiguration) {
         self.connectionManager = IMAPConnectionManager(configuration: configuration)
+    }
+
+    /// Starts configured IMAP IDLE watches (dedicated connections via SwiftMail) for servers
+    /// that have `idle: true` in ~/.post.json.
+    public func startIdleWatches() async {
+        let infos = await connectionManager.serverInfos()
+        stderr("startIdleWatches: found \(infos.count) servers")
+
+        for info in infos {
+            guard let config = try? await connectionManager.resolveServerConfiguration(serverId: info.id) else {
+                continue
+            }
+
+            guard config.idle == true else {
+                stderr("IDLE disabled for server=\(info.id)")
+                continue
+            }
+
+            let mailbox = (config.idleMailbox?.isEmpty == false) ? (config.idleMailbox!) : "INBOX"
+            let command = config.command
+
+            if idleWatchTasks[info.id] != nil {
+                stderr("IDLE watch already running for server=\(info.id)")
+                continue
+            }
+
+            stderr("Starting IDLE watch for server=\(info.id) mailbox=\(mailbox) command=\(command ?? "<nil>")")
+            logger.info("Starting IDLE watch for server=\(info.id) mailbox=\(mailbox)")
+            idleWatchTasks[info.id] = Task { [serverId = info.id] in
+                await self.runIdleWatch(serverId: serverId, mailbox: mailbox, command: command)
+            }
+        }
+    }
+
+    private func runIdleWatch(serverId: String, mailbox: String, command: String?) async {
+        while !Task.isCancelled {
+            do {
+                let server = try await connectionManager.connection(for: serverId)
+
+                stderr("runIdleWatch loop starting for \(serverId)/\(mailbox)")
+
+                // Baseline: Get current max UID
+                var lastSeenUID: Int = 0
+                do {
+                    // Fetch latest 1 message to get the highest UID
+                    // (We don't need to fetch 20, just the HEAD to know where we are)
+                    let latest = try await listMessages(serverId: serverId, mailbox: mailbox, limit: 1)
+                    if let highest = latest.first?.uid {
+                        lastSeenUID = highest
+                    }
+                    stderr("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID)")
+                    logger.info("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID)")
+                } catch {
+                    logger.warning("Failed to build baseline for \(serverId)/\(mailbox): \(String(describing: error))")
+                }
+
+                let idleSession = try await server.idle(on: mailbox)
+                stderr("IDLE connected for \(serverId)/\(mailbox)")
+                logger.info("IDLE connected for \(serverId)/\(mailbox)")
+
+                defer {
+                    Task {
+                        try? await idleSession.done()
+                        self.logger.info("IDLE session closed for \(serverId)/\(mailbox)")
+                    }
+                }
+
+                // Catch any messages that arrived during setup (between baseline and IDLE start)
+                do {
+                    let caughtUp = try await fetchMessagesSince(serverId: serverId, mailbox: mailbox, minUID: lastSeenUID + 1)
+                    stderr("IDLE catch-up for \(serverId)/\(mailbox): fetched \(caughtUp.count) messages since uid \(lastSeenUID + 1)")
+                    for msg in caughtUp {
+                        if msg.uid > lastSeenUID {
+                            lastSeenUID = msg.uid
+                            stderr("New message (catch-up) \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
+                            logger.info("New message (catch-up) on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
+                            if let command {
+                                executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: msg)
+                            }
+                        }
+                    }
+                } catch {
+                    logger.warning("Catch-up fetch failed for \(serverId)/\(mailbox): \(String(describing: error))")
+                }
+
+                for await event in idleSession.events {
+                    if Task.isCancelled { break }
+
+                    switch event {
+                    case .exists(let count):
+                        stderr("IDLE EXISTS for \(serverId)/\(mailbox): count=\(count) lastSeenUID=\(lastSeenUID)")
+                        let newMessages = try await fetchMessagesSince(serverId: serverId, mailbox: mailbox, minUID: lastSeenUID + 1)
+                        stderr("IDLE delta fetch for \(serverId)/\(mailbox): fetched \(newMessages.count) messages since uid \(lastSeenUID + 1)")
+                        for msg in newMessages {
+                            if msg.uid > lastSeenUID {
+                                lastSeenUID = msg.uid
+                                stderr("New message \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
+                                logger.info("New message on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
+                                if let command {
+                                    executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: msg)
+                                }
+                            }
+                        }
+                    case .expunge(_):
+                        // Sequence numbers can shift; UID-based high-water mark remains safe.
+                        break
+                    case .bye:
+                        stderr("IDLE BYE for \(serverId)/\(mailbox)")
+                        logger.warning("IDLE received BYE for \(serverId)/\(mailbox); reconnecting")
+                        return
+                    default:
+                        break
+                    }
+                }
+
+                // If stream ends, reconnect
+                stderr("IDLE stream ended for \(serverId)/\(mailbox); reconnecting")
+                logger.warning("IDLE stream ended for \(serverId)/\(mailbox); reconnecting")
+            } catch {
+                stderr("IDLE watch failed for \(serverId)/\(mailbox): \(String(describing: error))")
+                logger.warning("IDLE watch failed for \(serverId)/\(mailbox): \(String(describing: error))")
+            }
+
+            // backoff
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+        }
+    }
+
+    /// Fetches messages with UID >= minUID
+    private func fetchMessagesSince(serverId: String, mailbox: String, minUID: Int) async throws -> [MessageHeader] {
+        return try await withServer(serverId: serverId) { server in
+            _ = try await server.selectMailbox(mailbox)
+            
+            let safeMinUID = max(1, minUID)
+            // Fetch UID range as a single `UID FETCH <min>:*` (no expansion)
+            let infos = try await server.fetchMessageInfos(uidRange: UID(safeMinUID)...)
+            let headers: [MessageHeader] = infos.compactMap { info in
+                let uidInt = Int(info.uid?.value ?? 0)
+                guard uidInt > 0 else { return nil }
+                return MessageHeader(
+                    uid: uidInt,
+                    from: info.from ?? "Unknown",
+                    subject: info.subject ?? "(No Subject)",
+                    date: formatDate(info.date)
+                )
+            }
+            return headers.sorted { $0.uid < $1.uid }
+        }
+    }
+
+    private func executeHookCommand(_ command: String, serverId: String, mailbox: String, message: MessageHeader) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+
+        var env = ProcessInfo.processInfo.environment
+        env["POST_UID"] = String(message.uid)
+        env["POST_FROM"] = message.from
+        env["POST_SUBJECT"] = message.subject
+        env["POST_DATE"] = message.date
+        env["POST_SERVER"] = serverId
+        env["POST_MAILBOX"] = mailbox
+        process.environment = env
+
+        process.arguments = ["-c", command]
+
+        stderr("Executing hook for \(serverId)/\(mailbox) uid=\(message.uid): \(command)")
+
+        process.terminationHandler = { [serverId, mailbox, uid = message.uid] proc in
+            let status = proc.terminationStatus
+            let reason = proc.terminationReason
+            if let data = ("[postd] Hook finished for \(serverId)/\(mailbox) uid=\(uid): status=\(status) reason=\(reason)\n").data(using: .utf8) {
+                try? FileHandle.standardError.write(contentsOf: data)
+            }
+        }
+
+        do {
+            try process.run()
+        } catch {
+            stderr("Failed to execute hook for \(serverId)/\(mailbox) uid=\(message.uid): \(String(describing: error))")
+            logger.warning("Failed to execute hook command for \(serverId)/\(mailbox) uid=\(message.uid): \(String(describing: error))")
+        }
     }
 
     public func shutdown() async {
@@ -51,7 +240,23 @@ public actor PostServer {
     /// Lists all configured IMAP servers with their IDs and names
     @MCPTool
     public func listServers() async -> [ServerInfo] {
-        await connectionManager.serverInfos()
+        var results: [ServerInfo] = []
+        let infos = await connectionManager.serverInfos()
+        
+        for info in infos {
+            if let config = try? await connectionManager.resolveServerConfiguration(serverId: info.id) {
+                results.append(ServerInfo(
+                    id: info.id,
+                    name: info.name,
+                    host: info.host,
+                    command: config.command
+                ))
+            } else {
+                results.append(info)
+            }
+        }
+        
+        return results
     }
 
     /// Lists emails in a mailbox on the specified server

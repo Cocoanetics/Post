@@ -79,6 +79,11 @@ extension PostDaemon {
                 try PIDFileManager.writeCurrentPID()
                 logToStderr("PID written to \(PIDFileManager.pidURL.path)")
 
+                // Start configured IMAP IDLE watches (dedicated connections; does not interfere with primary).
+                Task {
+                    await server.startIdleWatches()
+                }
+
                 let signalHandler = SignalHandler(transports: transports)
                 await signalHandler.setup()
 
