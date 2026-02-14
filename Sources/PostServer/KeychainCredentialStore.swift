@@ -3,6 +3,8 @@ import Foundation
 import Security
 import CommonCrypto
 
+private let keychainLock = NSLock()
+
 /// Manages IMAP credentials in a dedicated keychain file.
 ///
 /// Uses `kSecClassInternetPassword` entries with native attributes
@@ -30,9 +32,6 @@ public final class KeychainCredentialStore: Sendable {
         if try findItem(in: keychain, label: id) != nil {
             try deleteItem(in: keychain, label: id)
         }
-
-        let access = try createTrustedAccess(forLabel: id)
-
         let attrs: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
             kSecUseKeychain as String: keychain,
@@ -42,7 +41,6 @@ public final class KeychainCredentialStore: Sendable {
             kSecAttrProtocol as String: protocolAttr,
             kSecAttrLabel as String: id,
             kSecAttrDescription as String: "Post IMAP",
-            kSecAttrAccess as String: access,
             kSecValueData as String: password.data(using: .utf8) ?? Data()
         ]
         let status = SecItemAdd(attrs as CFDictionary, nil)
@@ -161,6 +159,9 @@ public final class KeychainCredentialStore: Sendable {
     // MARK: - Private
 
     private func openOrCreate() throws -> SecKeychain {
+        keychainLock.lock()
+        defer { keychainLock.unlock() }
+
         var keychain: SecKeychain?
         let passphrase = try derivePassphrase()
 
@@ -222,36 +223,6 @@ public final class KeychainCredentialStore: Sendable {
         guard status == errSecSuccess else {
             throw KeychainError.operationFailed(status, "delete")
         }
-    }
-
-    /// Creates a SecAccess that trusts both `post` and `postd` binaries
-    /// so the daemon can read credentials without prompts.
-    private func createTrustedAccess(forLabel label: String) throws -> SecAccess {
-        var trustedApps: [SecTrustedApplication] = []
-
-        // Trust self (current process)
-        var selfApp: SecTrustedApplication?
-        if SecTrustedApplicationCreateFromPath(nil, &selfApp) == errSecSuccess, let selfApp {
-            trustedApps.append(selfApp)
-        }
-
-        // Trust both post and postd from the same build directory
-        if let buildDir = Bundle.main.executableURL?.deletingLastPathComponent() {
-            for binary in ["post", "postd"] {
-                let binaryPath = buildDir.appendingPathComponent(binary).path
-                var app: SecTrustedApplication?
-                if SecTrustedApplicationCreateFromPath(binaryPath, &app) == errSecSuccess, let app {
-                    trustedApps.append(app)
-                }
-            }
-        }
-
-        var access: SecAccess?
-        let status = SecAccessCreate(label as CFString, trustedApps as CFArray, &access)
-        guard status == errSecSuccess, let access else {
-            throw KeychainError.operationFailed(status, "create access")
-        }
-        return access
     }
 
     private func protocolAttribute(for port: Int) -> CFString {

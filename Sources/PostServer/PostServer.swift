@@ -48,10 +48,14 @@ public actor PostServer {
 
     private var idleWatchTasks: [String: Task<Void, Never>] = [:]
 
-    private nonisolated func stderr(_ message: String) {
+    private static func stderr(_ message: String) {
         if let data = ("[postd] \(message)\n").data(using: .utf8) {
             try? FileHandle.standardError.write(contentsOf: data)
         }
+    }
+
+    private nonisolated func stderr(_ message: String) {
+        Self.stderr(message)
     }
 
     public init(configuration: PostConfiguration) {
@@ -84,57 +88,91 @@ public actor PostServer {
 
             stderr("Starting IDLE watch for server=\(info.id) mailbox=\(mailbox) command=\(command ?? "<nil>")")
             logger.info("Starting IDLE watch for server=\(info.id) mailbox=\(mailbox)")
+            
             let manager = connectionManager
-            idleWatchTasks[info.id] = Task.detached { [serverId = info.id] in
-                await Self.runIdleWatch(serverId: serverId, mailbox: mailbox, command: command, connectionManager: manager)
+            idleWatchTasks[info.id] = Task.detached { [weak self] in
+                await Self.runIdleWatch(
+                    serverId: info.id,
+                    mailbox: mailbox,
+                    command: command,
+                    connectionManager: manager,
+                    postServer: self
+                )
             }
         }
     }
 
-    private func runIdleWatch(serverId: String, mailbox: String, command: String?) async {
+    /// Runs IDLE watch off the actor so the event loop doesn't block MCP requests.
+    /// Uses the shared IMAPServer instance (which manages its own IDLE connections internally).
+    private static func runIdleWatch(
+        serverId: String,
+        mailbox: String,
+        command: String?,
+        connectionManager: IMAPConnectionManager,
+        postServer: PostServer?
+    ) async {
+        let logger = Logger(label: "com.cocoanetics.Post.IDLE.\(serverId)")
+
         while !Task.isCancelled {
             do {
+                // Get connection inside the detached task (async call to actor)
+                Self.stderr("runIdleWatch: getting connection for \(serverId)")
                 let server = try await connectionManager.connection(for: serverId)
+                Self.stderr("runIdleWatch: got connection for \(serverId)")
+                
+                Self.stderr("runIdleWatch loop starting for \(serverId)/\(mailbox)")
 
-                stderr("runIdleWatch loop starting for \(serverId)/\(mailbox)")
-
-                // Baseline: Get current max UID
+                // Baseline: Get current max UID using primary connection
                 var lastSeenUID: Int = 0
                 do {
                     // Fetch latest 1 message to get the highest UID
-                    // (We don't need to fetch 20, just the HEAD to know where we are)
-                    let latest = try await listMessages(serverId: serverId, mailbox: mailbox, limit: 1)
-                    if let highest = latest.first?.uid {
-                        lastSeenUID = highest
+                    // Use fetchMessageInfos with limit to avoid fetching all headers
+                    // Note: fetchMessageInfos(uidRange:) requires a range.
+                    // We need to list messages or status to find the latest.
+                    // Let's use mailboxStatus to get uidNext or highestModSeq?
+                    // Or just use listMessages from the server (which uses primary connection)
+                    
+                    // Since we are static, we call IMAPServer methods directly.
+                    // We need to know the UIDNext or search for *
+                    // Actually, let's just use selectMailbox to get the status, which often includes UIDs
+                    
+                    let status = try await server.selectMailbox(mailbox)
+                    if let latest = status.latest(1) {
+                        let infos = try await server.fetchMessageInfosBulk(using: latest)
+                        if let uid = infos.first?.uid {
+                            lastSeenUID = Int(uid.value)
+                        }
                     }
-                    stderr("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID)")
+                    
+                    Self.stderr("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID)")
                     logger.info("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID)")
                 } catch {
                     logger.warning("Failed to build baseline for \(serverId)/\(mailbox): \(String(describing: error))")
                 }
 
+                // Start IDLE on the mailbox (IMAPServer creates a dedicated connection)
                 let idleSession = try await server.idle(on: mailbox)
-                stderr("IDLE connected for \(serverId)/\(mailbox)")
+                Self.stderr("IDLE connected for \(serverId)/\(mailbox)")
                 logger.info("IDLE connected for \(serverId)/\(mailbox)")
 
                 defer {
                     Task {
                         try? await idleSession.done()
-                        self.logger.info("IDLE session closed for \(serverId)/\(mailbox)")
+                        logger.info("IDLE session closed for \(serverId)/\(mailbox)")
                     }
                 }
 
                 // Catch any messages that arrived during setup (between baseline and IDLE start)
                 do {
-                    let caughtUp = try await fetchMessagesSince(serverId: serverId, mailbox: mailbox, minUID: lastSeenUID + 1)
-                    stderr("IDLE catch-up for \(serverId)/\(mailbox): fetched \(caughtUp.count) messages since uid \(lastSeenUID + 1)")
+                    let caughtUp = try await Self.fetchNewMessages(using: server, mailbox: mailbox, minUID: lastSeenUID + 1)
+                    Self.stderr("IDLE catch-up for \(serverId)/\(mailbox): fetched \(caughtUp.count) messages since uid \(lastSeenUID + 1)")
                     for msg in caughtUp {
                         if msg.uid > lastSeenUID {
                             lastSeenUID = msg.uid
-                            stderr("New message (catch-up) \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
+                            Self.stderr("New message (catch-up) \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
                             logger.info("New message (catch-up) on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
                             if let command {
-                                executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: msg)
+                                Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: msg)
                             }
                         }
                     }
@@ -147,16 +185,16 @@ public actor PostServer {
 
                     switch event {
                     case .exists(let count):
-                        stderr("IDLE EXISTS for \(serverId)/\(mailbox): count=\(count) lastSeenUID=\(lastSeenUID)")
-                        let newMessages = try await fetchMessagesSince(serverId: serverId, mailbox: mailbox, minUID: lastSeenUID + 1)
-                        stderr("IDLE delta fetch for \(serverId)/\(mailbox): fetched \(newMessages.count) messages since uid \(lastSeenUID + 1)")
+                        Self.stderr("IDLE EXISTS for \(serverId)/\(mailbox): count=\(count) lastSeenUID=\(lastSeenUID)")
+                        let newMessages = try await Self.fetchNewMessages(using: server, mailbox: mailbox, minUID: lastSeenUID + 1)
+                        Self.stderr("IDLE delta fetch for \(serverId)/\(mailbox): fetched \(newMessages.count) messages since uid \(lastSeenUID + 1)")
                         for msg in newMessages {
                             if msg.uid > lastSeenUID {
                                 lastSeenUID = msg.uid
-                                stderr("New message \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
+                                Self.stderr("New message \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
                                 logger.info("New message on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
                                 if let command {
-                                    executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: msg)
+                                    Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: msg)
                                 }
                             }
                         }
@@ -164,7 +202,7 @@ public actor PostServer {
                         // Sequence numbers can shift; UID-based high-water mark remains safe.
                         break
                     case .bye:
-                        stderr("IDLE BYE for \(serverId)/\(mailbox)")
+                        Self.stderr("IDLE BYE for \(serverId)/\(mailbox)")
                         logger.warning("IDLE received BYE for \(serverId)/\(mailbox); reconnecting")
                         return
                     default:
@@ -173,15 +211,32 @@ public actor PostServer {
                 }
 
                 // If stream ends, reconnect
-                stderr("IDLE stream ended for \(serverId)/\(mailbox); reconnecting")
+                Self.stderr("IDLE stream ended for \(serverId)/\(mailbox); reconnecting")
                 logger.warning("IDLE stream ended for \(serverId)/\(mailbox); reconnecting")
             } catch {
-                stderr("IDLE watch failed for \(serverId)/\(mailbox): \(String(describing: error))")
+                Self.stderr("IDLE watch failed for \(serverId)/\(mailbox): \(String(describing: error))")
                 logger.warning("IDLE watch failed for \(serverId)/\(mailbox): \(String(describing: error))")
             }
 
             // backoff
             try? await Task.sleep(nanoseconds: 3_000_000_000)
+        }
+    }
+
+    /// Fetches new messages using a dedicated IDLE connection (no actor hop).
+    private static func fetchNewMessages(using server: IMAPServer, mailbox: String, minUID: Int) async throws -> [MessageHeader] {
+        _ = try await server.selectMailbox(mailbox)
+        let safeMinUID = max(1, minUID)
+        let infos = try await server.fetchMessageInfos(uidRange: UID(safeMinUID)...)
+        return infos.compactMap { info in
+            let uidInt = Int(info.uid?.value ?? 0)
+            guard uidInt > 0 else { return nil }
+            return MessageHeader(
+                uid: uidInt,
+                from: info.from ?? "Unknown",
+                subject: info.subject ?? "(No Subject)",
+                date: info.date?.description ?? ""
+            )
         }
     }
 
@@ -207,7 +262,7 @@ public actor PostServer {
         }
     }
 
-    private func executeHookCommand(_ command: String, serverId: String, mailbox: String, message: MessageHeader) {
+    private static func executeHookCommand(_ command: String, serverId: String, mailbox: String, message: MessageHeader) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
 
@@ -235,8 +290,7 @@ public actor PostServer {
         do {
             try process.run()
         } catch {
-            stderr("Failed to execute hook for \(serverId)/\(mailbox) uid=\(message.uid): \(String(describing: error))")
-            logger.warning("Failed to execute hook command for \(serverId)/\(mailbox) uid=\(message.uid): \(String(describing: error))")
+            Self.stderr("Failed to execute hook for \(serverId)/\(mailbox) uid=\(message.uid): \(String(describing: error))")
         }
     }
 
