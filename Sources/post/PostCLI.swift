@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import PostServer
+import SwiftMail
 import SwiftMCP
 
 @main
@@ -626,7 +627,7 @@ private func printMessageDetail(_ message: MessageDetail) {
     }
 }
 
-private func printMailboxStatus(_ status: MailboxStatusInfo) {
+private func printMailboxStatus(_ status: Mailbox.Status) {
     if let messageCount = status.messageCount {
         print("Messages: \(messageCount)")
     }
@@ -644,12 +645,12 @@ private func printMailboxStatus(_ status: MailboxStatusInfo) {
     }
 }
 
-private func printQuotaInfo(_ quota: QuotaInfo) {
+private func printQuotaInfo(_ quota: Quota) {
     for resource in quota.resources {
-        if resource.name.uppercased() == "STORAGE" {
-            print("\(resource.name): \(resource.usage) / \(resource.limit) KB")
+        if resource.resourceName.uppercased() == "STORAGE" {
+            print("\(resource.resourceName): \(resource.usage) / \(resource.limit) KB")
         } else {
-            print("\(resource.name): \(resource.usage) / \(resource.limit)")
+            print("\(resource.resourceName): \(resource.usage) / \(resource.limit)")
         }
     }
 }

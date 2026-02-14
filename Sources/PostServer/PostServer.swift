@@ -341,16 +341,9 @@ public actor PostServer {
     /// - Parameter serverId: The server identifier
     /// - Parameter mailbox: Mailbox name (default: "INBOX")
     @MCPTool
-    public func mailboxStatus(serverId: String, mailbox: String = "INBOX") async throws -> MailboxStatusInfo {
+    public func mailboxStatus(serverId: String, mailbox: String = "INBOX") async throws -> Mailbox.Status {
         try await withServer(serverId: serverId) { server in
-            let status = try await server.mailboxStatus(mailbox)
-            return MailboxStatusInfo(
-                messageCount: status.messageCount,
-                recentCount: status.recentCount,
-                unseenCount: status.unseenCount,
-                uidNext: status.nextUID.map { Int(String(describing: $0))! },
-                uidValidity: status.uidValidity.map { Int(String(describing: $0))! }
-            )
+            try await server.mailboxStatus(mailbox)
         }
     }
 
@@ -555,13 +548,9 @@ public actor PostServer {
     /// - Parameter serverId: The server identifier
     /// - Parameter mailbox: Mailbox name (default: "INBOX")
     @MCPTool
-    public func getQuota(serverId: String, mailbox: String = "INBOX") async throws -> QuotaInfo {
+    public func getQuota(serverId: String, mailbox: String = "INBOX") async throws -> Quota {
         try await withServer(serverId: serverId) { server in
-            let quota = try await server.getQuotaRoot(mailboxName: mailbox)
-            let resources = quota.resources.map {
-                QuotaResourceInfo(name: $0.resourceName, usage: $0.usage, limit: $0.limit)
-            }
-            return QuotaInfo(quotaRoot: quota.quotaRoot, resources: resources)
+            try await server.getQuotaRoot(mailboxName: mailbox)
         }
     }
 
