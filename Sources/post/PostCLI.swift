@@ -26,6 +26,7 @@ struct PostCLI: AsyncParsableCommand {
             Expunge.self,
             Quota.self,
             Attachment.self,
+            Eml.self,
             Idle.self,
             Credential.self
         ]
@@ -443,6 +444,37 @@ extension PostCLI {
         }
     }
 
+    struct Eml: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Download a message as .eml")
+
+        @Argument(help: "Message UID")
+        var uid: Int
+
+        @Option(name: .long, help: "Server identifier")
+        var server: String?
+
+        @Option(name: .long, help: "Mailbox name")
+        var mailbox: String = "INBOX"
+
+        @Option(name: .long, help: "Output directory (default: current directory)")
+        var out: String = "."
+
+        func run() async throws {
+            try await withClient { client in
+                let serverId = try await resolveServerID(explicit: server, client: client)
+                let emlData = try await client.downloadEml(serverId: serverId, uid: uid, mailbox: mailbox)
+
+                let outputDir = URL(fileURLWithPath: out, isDirectory: true)
+                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+
+                let filename = "\(uid).eml"
+                let destination = outputDir.appendingPathComponent(filename)
+                try emlData.write(to: destination)
+                print("Saved \(filename) to \(destination.path)")
+            }
+        }
+    }
+
     struct Idle: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Watch for new messages (polls via MCP)")
 
@@ -824,7 +856,14 @@ private func printMessageDetail(_ message: MessageDetail) {
         print("(No body available)")
     }
 
-    print("")
+    if let headers = message.additionalHeaders, !headers.isEmpty {
+        print("Headers:")
+        for key in headers.keys.sorted() {
+            print("  \(key): \(headers[key]!)")
+        }
+        print("")
+    }
+
     if message.attachments.isEmpty {
         print("Attachments: none")
     } else {

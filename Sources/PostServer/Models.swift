@@ -44,6 +44,8 @@ public struct MessageDetail: Codable, Sendable {
     public let textBody: String?
     public let htmlBody: String?
     public let attachments: [AttachmentInfo]
+    /// Additional RFC 822 headers not covered by the envelope (e.g. List-Unsubscribe, X-Spam-Score).
+    public let additionalHeaders: [String: String]?
 
     public init(
         uid: Int,
@@ -53,7 +55,8 @@ public struct MessageDetail: Codable, Sendable {
         date: String,
         textBody: String?,
         htmlBody: String?,
-        attachments: [AttachmentInfo]
+        attachments: [AttachmentInfo],
+        additionalHeaders: [String: String]? = nil
     ) {
         self.uid = uid
         self.from = from
@@ -63,6 +66,7 @@ public struct MessageDetail: Codable, Sendable {
         self.textBody = textBody
         self.htmlBody = htmlBody
         self.attachments = attachments
+        self.additionalHeaders = additionalHeaders
     }
 }
 

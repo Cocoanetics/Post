@@ -678,6 +678,18 @@ public actor PostServer {
         }
     }
 
+    @MCPTool
+    public func downloadEml(serverId: String, uid: Int, mailbox: String = "INBOX") async throws -> Data {
+        guard (1...Int(UInt32.max)).contains(uid) else {
+            throw PostServerError.invalidUID(uid)
+        }
+        return try await withServer(serverId: serverId) { server in
+            _ = try await server.selectMailbox(mailbox)
+            let uid = UID(UInt32(uid))
+            return try await server.fetchRawMessage(identifier: uid)
+        }
+    }
+
     private func withServer<T>(serverId: String, operation: (IMAPServer) async throws -> T) async throws -> T {
         do {
             let server = try await connectionManager.connection(for: serverId)
@@ -742,7 +754,8 @@ public actor PostServer {
             date: formatDate(message.date),
             textBody: message.textBody,
             htmlBody: message.htmlBody,
-            attachments: attachments
+            attachments: attachments,
+            additionalHeaders: message.header.additionalFields
         )
     }
 
