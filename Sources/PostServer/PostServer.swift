@@ -359,25 +359,48 @@ public actor PostServer {
         }
     }
 
-    /// Fetches a specific email by UID
+    /// Fetches one or more emails by UID set.
     /// - Parameter serverId: The server identifier
-    /// - Parameter uid: The message UID
+    /// - Parameter uids: UID(s) to fetch, comma-separated, ranges allowed e.g. 1,3,5-10
     /// - Parameter mailbox: Mailbox name (default: "INBOX")
     @MCPTool
-    public func fetchMessage(serverId: String, uid: Int, mailbox: String = "INBOX") async throws -> MessageDetail {
-        guard (1...Int(UInt32.max)).contains(uid) else {
-            throw PostServerError.invalidUID(uid)
+    public func fetchMessage(serverId: String, uids: String, mailbox: String = "INBOX") async throws -> [MessageDetail] {
+        guard let set = MessageIdentifierSet<UID>(string: uids) else {
+            throw PostServerError.invalidUIDSet(uids)
         }
 
         return try await withServer(serverId: serverId) { server in
             _ = try await server.selectMailbox(mailbox)
-            let set = MessageIdentifierSet<UID>(UID(UInt32(uid)))
+            var messages: [MessageDetail] = []
 
             for try await message in server.fetchMessages(using: set) {
-                return messageDetail(from: message)
+                messages.append(messageDetail(from: message))
             }
 
-            throw PostServerError.messageNotFound(uid: uid, mailbox: mailbox)
+            return messages.sorted { $0.uid < $1.uid }
+        }
+    }
+
+    /// Fetches raw RFC 822 message data for one or more UIDs.
+    /// - Parameter serverId: The server identifier
+    /// - Parameter uids: UID(s) to fetch, comma-separated, ranges allowed e.g. 1,3,5-10
+    /// - Parameter mailbox: Mailbox name (default: "INBOX")
+    @MCPTool
+    public func fetchRawMessages(serverId: String, uids: String, mailbox: String = "INBOX") async throws -> [RawMessage] {
+        guard let set = MessageIdentifierSet<UID>(string: uids) else {
+            throw PostServerError.invalidUIDSet(uids)
+        }
+
+        return try await withServer(serverId: serverId) { server in
+            _ = try await server.selectMailbox(mailbox)
+            var results: [RawMessage] = []
+
+            for uid in set.toArray() {
+                let data = try await server.fetchRawMessage(identifier: uid)
+                results.append(RawMessage(uid: Int(uid.value), rawData: data))
+            }
+
+            return results.sorted { $0.uid < $1.uid }
         }
     }
 

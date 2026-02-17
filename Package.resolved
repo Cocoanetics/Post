@@ -1,5 +1,5 @@
 {
-  "originHash" : "29c073b073ecba08243aa9995701cbd3616e7fb43e01c86155d791a86eb492f3",
+  "originHash" : "c78b60ada9467f323e6c5b6c8fab2b2ef8340a73a36e1b25bce25d0094f0874b",
   "pins" : [
     {
       "identity" : "anycodable",
@@ -42,8 +42,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-certificates.git",
       "state" : {
-        "revision" : "7d5f6124c91a2d06fb63a811695a3400d15a100e",
-        "version" : "1.17.1"
+        "revision" : "24ccdeeeed4dfaae7955fcac9dbf5489ed4f1a25",
+        "version" : "1.18.0"
       }
     },
     {
@@ -87,8 +87,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio",
       "state" : {
-        "revision" : "5e72fc102906ebe75a3487595a653e6f43725552",
-        "version" : "2.94.0"
+        "revision" : "9b92dcd5c22ae17016ad867852e0850f1f9f93ed",
+        "version" : "2.94.1"
       }
     },
     {

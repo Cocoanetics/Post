@@ -26,7 +26,6 @@ struct PostCLI: AsyncParsableCommand {
             Expunge.self,
             Quota.self,
             Attachment.self,
-            Eml.self,
             Idle.self,
             Credential.self
         ]
@@ -34,12 +33,24 @@ struct PostCLI: AsyncParsableCommand {
 }
 
 extension PostCLI {
+    struct GlobalOptions: ParsableArguments {
+        @ArgumentParser.Flag(name: .long, help: "Output as JSON")
+        var json: Bool = false
+    }
+
     struct Servers: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "List configured IMAP servers")
+
+        @OptionGroup
+        var globals: GlobalOptions
 
         func run() async throws {
             try await withClient { client in
                 let servers = try await client.listServers()
+                if globals.json {
+                    outputJSON(servers)
+                    return
+                }
                 printServersTable(servers)
             }
         }
@@ -57,20 +68,33 @@ extension PostCLI {
         @Option(name: .long, help: "Maximum number of messages")
         var limit: Int = 10
 
+        @OptionGroup
+        var globals: GlobalOptions
+
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 let messages = try await client.listMessages(serverId: serverId, mailbox: mailbox, limit: limit)
+                if globals.json {
+                    outputJSON(messages)
+                    return
+                }
                 printMessageHeaders(messages)
             }
         }
     }
 
     struct Fetch: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Fetch a message by UID")
+        static let configuration = CommandConfiguration(abstract: "Fetch message(s) by UID")
 
-        @Argument(help: "Message UID")
-        var uid: Int
+        @Argument(help: "UID(s) of the message (comma-separated; ranges like 1-3 allowed)")
+        var uid: String
+
+        @ArgumentParser.Flag(help: "Download raw RFC 822 message as .eml file")
+        var eml: Bool = false
+
+        @Option(name: .long, help: "Output directory for .eml or text files")
+        var out: String?
 
         @Option(name: .long, help: "Server identifier")
         var server: String?
@@ -78,11 +102,88 @@ extension PostCLI {
         @Option(name: .long, help: "Mailbox name")
         var mailbox: String = "INBOX"
 
+        @OptionGroup
+        var globals: GlobalOptions
+
+        func validate() throws {
+            if eml && out == nil {
+                throw ValidationError("--eml requires --out")
+            }
+
+            guard MessageIdentifierSet<UID>(string: uid) != nil else {
+                throw ValidationError("Invalid UID set '\(uid)'. Use comma-separated values or ranges (e.g. 1-3,5,10-20).")
+            }
+        }
+
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
-                let message = try await client.fetchMessage(serverId: serverId, uid: uid, mailbox: mailbox)
-                printMessageDetail(message)
+                guard let uidSet = MessageIdentifierSet<UID>(string: uid) else {
+                    throw ValidationError("Invalid UID set '\(uid)'. Use comma-separated values or ranges (e.g. 1-3,5,10-20).")
+                }
+
+                let outputDir: URL?
+                if let out, eml || !globals.json {
+                    let directory = URL(fileURLWithPath: out, isDirectory: true)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    outputDir = directory
+                } else {
+                    outputDir = nil
+                }
+
+                var jsonMessages: [MessageDetail] = []
+                var foundCount = 0
+                for messageUID in uidSet.toArray() {
+                    let uidValue = Int(messageUID.value)
+
+                    if eml {
+                        guard let outputDir else {
+                            throw ValidationError("--eml requires --out")
+                        }
+
+                        let emlData = try await client.downloadEml(serverId: serverId, uid: uidValue, mailbox: mailbox)
+                        guard !emlData.isEmpty else { continue }
+                        foundCount += 1
+                        let filename = "\(uidValue).eml"
+                        let destination = outputDir.appendingPathComponent(filename)
+                        try emlData.write(to: destination)
+                        print("Saved \(filename) to \(destination.path)")
+                        continue
+                    }
+
+                    let messages = try await client.fetchMessage(
+                        serverId: serverId,
+                        uids: String(uidValue),
+                        mailbox: mailbox
+                    )
+
+                    foundCount += messages.count
+
+                    if globals.json {
+                        jsonMessages.append(contentsOf: messages)
+                    } else if let outputDir {
+                        for message in messages {
+                            let filename = "\(message.uid).txt"
+                            let destination = outputDir.appendingPathComponent(filename)
+                            let textBody = message.textBody ?? ""
+                            try textBody.write(to: destination, atomically: true, encoding: .utf8)
+                            print("Saved \(filename) to \(destination.path)")
+                        }
+                    } else {
+                        for message in messages {
+                            printMessageDetail(message)
+                        }
+                    }
+                }
+
+                if foundCount == 0 {
+                    fputs("Error: No messages found\n", stderr)
+                    throw ExitCode.failure
+                }
+
+                if globals.json, !eml {
+                    outputJSON(jsonMessages)
+                }
             }
         }
     }
@@ -93,10 +194,18 @@ extension PostCLI {
         @Option(name: .long, help: "Server identifier")
         var server: String?
 
+        @OptionGroup
+        var globals: GlobalOptions
+
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 let folders = try await client.listFolders(serverId: serverId)
+
+                if globals.json {
+                    outputJSON(folders)
+                    return
+                }
 
                 if folders.isEmpty {
                     print("No folders found.")
@@ -123,10 +232,17 @@ extension PostCLI {
         @Option(name: .long, help: "Server identifier")
         var server: String?
 
+        @OptionGroup
+        var globals: GlobalOptions
+
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 let result = try await client.createMailbox(serverId: serverId, name: name)
+                if globals.json {
+                    outputJSON(ResultMessage(result: result))
+                    return
+                }
                 print(result)
             }
         }
@@ -141,10 +257,17 @@ extension PostCLI {
         @Option(name: .long, help: "Mailbox name")
         var mailbox: String = "INBOX"
 
+        @OptionGroup
+        var globals: GlobalOptions
+
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 let status = try await client.mailboxStatus(serverId: serverId, mailbox: mailbox)
+                if globals.json {
+                    outputJSON(status)
+                    return
+                }
                 printMailboxStatus(status)
             }
         }
@@ -174,6 +297,9 @@ extension PostCLI {
         @Option(name: .long, help: "Search internal date before (ISO 8601)")
         var before: String?
 
+        @OptionGroup
+        var globals: GlobalOptions
+
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
@@ -186,6 +312,10 @@ extension PostCLI {
                     since: since,
                     before: before
                 )
+                if globals.json {
+                    outputJSON(messages)
+                    return
+                }
                 printMessageHeaders(messages)
             }
         }
@@ -206,6 +336,9 @@ extension PostCLI {
         @Option(name: .long, help: "Source mailbox")
         var mailbox: String = "INBOX"
 
+        @OptionGroup
+        var globals: GlobalOptions
+
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
@@ -215,6 +348,10 @@ extension PostCLI {
                     targetMailbox: target,
                     mailbox: mailbox
                 )
+                if globals.json {
+                    outputJSON(ResultMessage(result: message))
+                    return
+                }
                 print(message)
             }
         }
@@ -235,6 +372,9 @@ extension PostCLI {
         @Option(name: .long, help: "Source mailbox")
         var mailbox: String = "INBOX"
 
+        @OptionGroup
+        var globals: GlobalOptions
+
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
@@ -244,6 +384,10 @@ extension PostCLI {
                     targetMailbox: target,
                     mailbox: mailbox
                 )
+                if globals.json {
+                    outputJSON(ResultMessage(result: result))
+                    return
+                }
                 print(result)
             }
         }
@@ -269,6 +413,9 @@ extension PostCLI {
 
         @Option(name: .long, help: "Mailbox name")
         var mailbox: String = "INBOX"
+
+        @OptionGroup
+        var globals: GlobalOptions
 
         func validate() throws {
             let addValue = add?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -303,6 +450,10 @@ extension PostCLI {
                     operation: operation,
                     mailbox: mailbox
                 )
+                if globals.json {
+                    outputJSON(ResultMessage(result: result))
+                    return
+                }
                 print(result)
             }
         }
@@ -320,10 +471,17 @@ extension PostCLI {
         @Option(name: .long, help: "Source mailbox")
         var mailbox: String = "INBOX"
 
+        @OptionGroup
+        var globals: GlobalOptions
+
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 let result = try await client.trashMessages(serverId: serverId, uids: uids, mailbox: mailbox)
+                if globals.json {
+                    outputJSON(ResultMessage(result: result))
+                    return
+                }
                 print(result)
             }
         }
@@ -341,10 +499,17 @@ extension PostCLI {
         @Option(name: .long, help: "Source mailbox")
         var mailbox: String = "INBOX"
 
+        @OptionGroup
+        var globals: GlobalOptions
+
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 let result = try await client.archiveMessages(serverId: serverId, uids: uids, mailbox: mailbox)
+                if globals.json {
+                    outputJSON(ResultMessage(result: result))
+                    return
+                }
                 print(result)
             }
         }
@@ -362,10 +527,17 @@ extension PostCLI {
         @Option(name: .long, help: "Source mailbox")
         var mailbox: String = "INBOX"
 
+        @OptionGroup
+        var globals: GlobalOptions
+
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 let result = try await client.junkMessages(serverId: serverId, uids: uids, mailbox: mailbox)
+                if globals.json {
+                    outputJSON(ResultMessage(result: result))
+                    return
+                }
                 print(result)
             }
         }
@@ -380,10 +552,17 @@ extension PostCLI {
         @Option(name: .long, help: "Mailbox name")
         var mailbox: String = "INBOX"
 
+        @OptionGroup
+        var globals: GlobalOptions
+
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 let result = try await client.expungeMessages(serverId: serverId, mailbox: mailbox)
+                if globals.json {
+                    outputJSON(ResultMessage(result: result))
+                    return
+                }
                 print(result)
             }
         }
@@ -398,10 +577,17 @@ extension PostCLI {
         @Option(name: .long, help: "Mailbox name")
         var mailbox: String = "INBOX"
 
+        @OptionGroup
+        var globals: GlobalOptions
+
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 let quota = try await client.getQuota(serverId: serverId, mailbox: mailbox)
+                if globals.json {
+                    outputJSON(quota)
+                    return
+                }
                 printQuotaInfo(quota)
             }
         }
@@ -440,37 +626,6 @@ extension PostCLI {
                 let destination = outputDir.appendingPathComponent(attachment.filename)
                 try data.write(to: destination)
                 print("Saved \(attachment.filename) (\(attachment.contentType), \(formatBytes(attachment.size))) to \(destination.path)")
-            }
-        }
-    }
-
-    struct Eml: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Download a message as .eml")
-
-        @Argument(help: "Message UID")
-        var uid: Int
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Mailbox name")
-        var mailbox: String = "INBOX"
-
-        @Option(name: .long, help: "Output directory (default: current directory)")
-        var out: String = "."
-
-        func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                let emlData = try await client.downloadEml(serverId: serverId, uid: uid, mailbox: mailbox)
-
-                let outputDir = URL(fileURLWithPath: out, isDirectory: true)
-                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-
-                let filename = "\(uid).eml"
-                let destination = outputDir.appendingPathComponent(filename)
-                try emlData.write(to: destination)
-                print("Saved \(filename) to \(destination.path)")
             }
         }
     }
@@ -768,6 +923,10 @@ private enum PostCLIError: Error, LocalizedError {
     }
 }
 
+private struct ResultMessage: Codable {
+    let result: String
+}
+
 private func withClient<T>(_ operation: (PostProxy) async throws -> T) async throws -> T {
     let tcpConfig = MCPServerTcpConfig(serviceName: PostProxy.serverName)
     let proxy = MCPServerProxy(config: .tcp(config: tcpConfig))
@@ -781,6 +940,16 @@ private func withClient<T>(_ operation: (PostProxy) async throws -> T) async thr
 
     let client = PostProxy(proxy: proxy)
     return try await operation(client)
+}
+
+private func outputJSON<T: Encodable>(_ value: T) {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    guard let data = try? encoder.encode(value), let string = String(data: data, encoding: .utf8) else {
+        print("Error: Failed to encode JSON.")
+        return
+    }
+    print(string)
 }
 
 private func resolveServerID(explicit: String?, client: PostProxy) async throws -> String {

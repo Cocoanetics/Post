@@ -3,3 +3,4 @@
 *.xcodeproj
 .post.json
 .DS_Store
+Packages/

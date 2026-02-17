@@ -21,9 +21,9 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(path: "../SwiftMCP"),
-        .package(path: "../SwiftMail"),
-        .package(path: "../SwiftText"),
+        .package(url: "https://github.com/Cocoanetics/SwiftMCP", branch: "main"),
+        .package(url: "https://github.com/Cocoanetics/SwiftMail", branch: "main"),
+        .package(url: "https://github.com/Cocoanetics/SwiftText", branch: "main"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0")
     ],
