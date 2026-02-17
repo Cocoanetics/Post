@@ -19,19 +19,15 @@ extension PostDaemon {
     struct Start: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Start the daemon")
 
-        @Flag(name: .long, help: "Run the daemon in the background.")
-        var daemonize: Bool = false
-
-        @Flag(name: .long, help: .hidden)
+        @Flag(name: .long, help: "Run the daemon in the foreground (useful for debugging).")
         var foreground: Bool = false
 
         func run() async throws {
-            if daemonize && !foreground {
+            if foreground {
+                try await runForeground()
+            } else {
                 try launchDetachedProcess()
-                return
             }
-
-            try await runForeground()
         }
 
         private func launchDetachedProcess() throws {

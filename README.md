@@ -9,7 +9,7 @@ Post pulls together [SwiftMail](https://github.com/Cocoanetics/SwiftMail), [Swif
 Post is three things in one package:
 
 ### `postd` — The Daemon
-A lightweight Launch Agent that maintains persistent IMAP connections to all your configured mail servers. It uses IDLE to get instant push notifications when new mail arrives, and can trigger custom commands (scripts, webhooks, etc.) on new messages.
+A lightweight Launch Agent that maintains persistent IMAP connections to all your configured mail servers. Optionally, it can use IMAP IDLE on any mailbox (INBOX, Sent, a custom folder, etc.) to get instant push notifications when messages arrive or change. When a change is detected, it can trigger a custom command — a shell script, a webhook call, whatever you need.
 
 ### MCP Server
 The daemon doubles as an [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server, exposing your email to AI agents. Agents can list servers, search messages, fetch content, download attachments, move/copy/flag messages, and more — all through a standardized tool interface.
@@ -29,12 +29,12 @@ post attachment 12199 --index 1 --out ./downloads --server drobnik
 ## How It Works
 
 ```
-┌─────────────┐     Bonjour + HTTP     ┌──────────────────┐
-│   post CLI  │ ◄─────────────────────► │                  │
-└─────────────┘                         │                  │
-                                        │   postd daemon   │──── IMAP IDLE ──► Mail Server 1
-┌─────────────┐     MCP (TCP)           │                  │──── IMAP IDLE ──► Mail Server 2
-│  AI Agents  │ ◄─────────────────────► │                  │──── IMAP IDLE ──► Mail Server 3
+┌─────────────┐                         ┌──────────────────┐
+│  post CLI   │◄── Bonjour + HTTP ─────►│                  │
+└─────────────┘                         │                  │──── IMAP IDLE ──► Mail Server 1
+                                        │  postd daemon    │──── IMAP IDLE ──► Mail Server 2
+┌─────────────┐                         │                  │──── IMAP IDLE ──► Mail Server 3
+│  AI Agents  │◄── MCP (TCP) ──────────►│                  │
 └─────────────┘                         └──────────────────┘
 ```
 
@@ -103,9 +103,9 @@ post credential set --server work --host imap.company.com --port 993 --username 
 
 | Field | Description |
 |-------|-------------|
-| `idle` | Keep a persistent IMAP IDLE connection to get instant new-mail notifications |
-| `idleMailbox` | Which mailbox to watch (default: `INBOX`) |
-| `command` | Script/binary to run when new mail arrives in the watched mailbox |
+| `idle` | Optional. Enable a persistent IMAP IDLE connection for instant change notifications |
+| `idleMailbox` | Which mailbox to watch — can be any folder, not just INBOX (default: `INBOX`) |
+| `command` | Script/binary to run when a change is detected in the watched mailbox |
 | `credentials` | Optional inline credentials (see below) — Keychain is preferred |
 | `httpPort` | Enable HTTP+SSE transport on this port (in addition to Bonjour) |
 
@@ -133,8 +133,8 @@ Credential resolution order: **Keychain** → **inline `credentials`** → error
 `postd` has four subcommands:
 
 ```bash
-postd start              # Start in foreground (default)
-postd start --daemonize  # Start in background
+postd start              # Start in background (default)
+postd start --foreground # Start in foreground (useful for debugging)
 postd stop               # Stop a running daemon (sends SIGTERM)
 postd status             # Check if the daemon is running
 postd reload             # Reload configuration (sends SIGHUP)
@@ -157,6 +157,7 @@ Create `~/Library/LaunchAgents/com.cocoanetics.postd.plist`:
     <array>
         <string>/path/to/.build/release/postd</string>
         <string>start</string>
+        <string>--foreground</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
