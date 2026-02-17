@@ -53,7 +53,8 @@ public actor PostServer {
     private var idleWatchTasks: [String: Task<Void, Never>] = [:]
 
     /// Sessions watching IDLE events (from watchIdleEvents tool calls).
-    private var idleWatchers: [UUID: Session] = [:]
+    /// Values are per-session stream continuations consumed by the active tool-call task.
+    private var idleWatchers: [UUID: AsyncStream<LogMessage>.Continuation] = [:]
 
     private static func stderr(_ message: String) {
         if let data = ("[postd] \(message)\n").data(using: .utf8) {
@@ -190,9 +191,16 @@ public actor PostServer {
                 for await event in idleSession.events {
                     if Task.isCancelled { break }
 
-                    // Send event to all watching sessions
+                    // Log every event to stderr
                     let eventDescription = Self.describeIdleEvent(event)
-                    await postServer?.notifyIdleWatchers(serverId: serverId, mailbox: mailbox, description: eventDescription)
+                    Self.stderr("IDLE event for \(serverId)/\(mailbox): \(eventDescription)")
+
+                    // Send event to all watching sessions
+                    if let postServer {
+                        await postServer.notifyIdleWatchers(serverId: serverId, mailbox: mailbox, description: eventDescription)
+                    } else {
+                        Self.stderr("IDLE WARNING: postServer is nil, cannot notify watchers")
+                    }
 
                     switch event {
                     case .exists(let count):
@@ -210,9 +218,9 @@ public actor PostServer {
                                 }
                             }
                         }
-                    case .expunge(_):
+                    case .expunge(let seq):
+                        Self.stderr("IDLE EXPUNGE for \(serverId)/\(mailbox): seq=\(seq.value)")
                         // Sequence numbers can shift; UID-based high-water mark remains safe.
-                        break
                     case .bye:
                         Self.stderr("IDLE BYE for \(serverId)/\(mailbox)")
                         logger.warning("IDLE received BYE for \(serverId)/\(mailbox); reconnecting")
@@ -280,12 +288,8 @@ public actor PostServer {
             ] as [String: String])
         )
 
-        for (id, session) in idleWatchers {
-            if await session.transport == nil {
-                idleWatchers.removeValue(forKey: id)
-                continue
-            }
-            await session.sendLogNotification(message)
+        for continuation in idleWatchers.values {
+            continuation.yield(message)
         }
     }
 
@@ -792,8 +796,18 @@ public actor PostServer {
         }
 
         let sessionId = await session.id
-        await session.setMinimumLogLevel(.debug)
-        idleWatchers[sessionId] = session
+        var continuationRef: AsyncStream<LogMessage>.Continuation?
+        let eventStream = AsyncStream<LogMessage> { continuation in
+            continuationRef = continuation
+        }
+        guard let continuation = continuationRef else {
+            throw PostServerError.noSession
+        }
+        idleWatchers[sessionId] = continuation
+        defer {
+            idleWatchers.removeValue(forKey: sessionId)
+            continuation.finish()
+        }
 
         await session.sendLogNotification(LogMessage(
             level: .info,
@@ -801,12 +815,25 @@ public actor PostServer {
             data: AnyCodable("Subscribed to IDLE events. Waiting for changes...")
         ))
 
-        // Block until cancelled (client disconnect / Ctrl+C)
-        while !Task.isCancelled {
-            try await Task.sleep(nanoseconds: 1_000_000_000)
+        if idleWatchTasks.isEmpty {
+            await session.sendLogNotification(LogMessage(
+                level: .warning,
+                logger: "idle",
+                data: AnyCodable("No active daemon IDLE watches. Enable `idle: true` in ~/.post.json and reload postd.")
+            ))
+        } else {
+            let activeServers = idleWatchTasks.keys.sorted().joined(separator: ", ")
+            await session.sendLogNotification(LogMessage(
+                level: .info,
+                logger: "idle",
+                data: AnyCodable("Active daemon IDLE watches: \(idleWatchTasks.count) (\(activeServers))")
+            ))
         }
 
-        idleWatchers.removeValue(forKey: sessionId)
+        // Forward queued IDLE events while the tool call is active.
+        for await message in eventStream {
+            await session.sendLogNotification(message)
+        }
         return "Stopped watching IDLE events."
     }
 
@@ -972,4 +999,3 @@ public typealias PostProxy = PostServer.Client
 public extension PostServer.Client {
     static var serverName: String { "Post" }
 }
-

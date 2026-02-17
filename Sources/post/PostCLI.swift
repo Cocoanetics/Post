@@ -13,19 +13,47 @@ private final class IdleEventLogger: MCPServerProxyLogNotificationHandling, @unc
         return f
     }()
 
+    private func writeStdoutLine(_ line: String) {
+        if let data = (line + "\n").data(using: .utf8) {
+            try? FileHandle.standardOutput.write(contentsOf: data)
+        }
+    }
+
+    private func parseStructuredEvent(_ data: Any) -> (server: String, mailbox: String, event: String)? {
+        if let dict = data as? [String: String],
+           let server = dict["server"],
+           let mailbox = dict["mailbox"],
+           let event = dict["event"] {
+            return (server, mailbox, event)
+        }
+
+        if let dict = data as? [String: Any],
+           let server = dict["server"] as? String,
+           let mailbox = dict["mailbox"] as? String,
+           let event = dict["event"] as? String {
+            return (server, mailbox, event)
+        }
+
+        if let dict = data as? [String: AnyCodable],
+           let server = dict["server"]?.value as? String,
+           let mailbox = dict["mailbox"]?.value as? String,
+           let event = dict["event"]?.value as? String {
+            return (server, mailbox, event)
+        }
+
+        return nil
+    }
+
     func mcpServerProxy(_ proxy: MCPServerProxy, didReceiveLog message: LogMessage) async {
         let timestamp = dateFormatter.string(from: Date())
 
         // Try to extract structured data (server, mailbox, event)
-        if let dict = message.data.value as? [String: Any],
-           let server = dict["server"] as? String,
-           let mailbox = dict["mailbox"] as? String,
-           let event = dict["event"] as? String {
-            fputs("[\(timestamp)] \(server)/\(mailbox): \(event)\n", stderr)
+        if let structured = parseStructuredEvent(message.data.value) {
+            writeStdoutLine("[\(timestamp)] \(structured.server)/\(structured.mailbox): \(structured.event)")
         } else if let text = message.data.value as? String {
-            fputs("[\(timestamp)] \(text)\n", stderr)
+            writeStdoutLine("[\(timestamp)] \(text)")
         } else {
-            fputs("[\(timestamp)] \(message.data)\n", stderr)
+            writeStdoutLine("[\(timestamp)] \(message.data)")
         }
     }
 }
@@ -666,6 +694,7 @@ extension PostCLI {
             await proxy.setLogNotificationHandler(IdleEventLogger())
 
             try await proxy.connect()
+            try await setProxyLogLevel(.debug, on: proxy)
 
             fputs("Connected to postd. Watching IDLE events (Ctrl+C to stop)...\n", stderr)
 
@@ -891,6 +920,26 @@ private enum PostCLIError: Error, LocalizedError {
 
 private struct ResultMessage: Codable {
     let result: String
+}
+
+private func setProxyLogLevel(_ level: LogLevel, on proxy: MCPServerProxy) async throws {
+    let request = JSONRPCMessage.request(
+        id: UUID().uuidString,
+        method: "logging/setLevel",
+        params: [
+            "level": AnyCodable(level.rawValue)
+        ]
+    )
+
+    let response = try await proxy.send(request)
+    switch response {
+    case .response:
+        return
+    case .errorResponse(let error):
+        throw ValidationError("Failed to configure MCP log level to '\(level.rawValue)': \(error.error.message)")
+    default:
+        throw ValidationError("Unexpected response while configuring MCP log level to '\(level.rawValue)'.")
+    }
 }
 
 private func withClient<T>(_ operation: (PostProxy) async throws -> T) async throws -> T {
