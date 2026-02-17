@@ -50,11 +50,78 @@ public enum PostServerError: Error, LocalizedError, Sendable {
 
 @MCPServer(name: "Post", generateClient: true)
 public actor PostServer {
+    private struct HookAttachmentPayload: Codable, Sendable {
+        let filename: String
+        let contentType: String
+        let disposition: String?
+        let section: String
+        let contentId: String?
+        let encoding: String?
+        let size: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case filename
+            case contentType
+            case disposition
+            case section
+            case contentId
+            case encoding
+            case size
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(filename, forKey: .filename)
+            try container.encode(contentType, forKey: .contentType)
+            try container.encodeIfPresent(disposition, forKey: .disposition)
+            try container.encode(section, forKey: .section)
+            try container.encodeIfPresent(contentId, forKey: .contentId)
+            try container.encodeIfPresent(encoding, forKey: .encoding)
+            try container.encodeIfPresent(size, forKey: .size)
+        }
+    }
+
+    private struct HookMessagePayload: Codable, Sendable {
+        let uid: Int
+        let from: String
+        let to: [String]
+        let replyTo: String?
+        let date: String
+        let subject: String
+        let markdown: String?
+        let attachmentNames: [String]
+        let attachments: [HookAttachmentPayload]
+
+        private enum CodingKeys: String, CodingKey {
+            case uid
+            case from
+            case to
+            case replyTo
+            case date
+            case subject
+            case markdown
+            case attachmentNames
+            case attachments
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(uid, forKey: .uid)
+            try container.encode(from, forKey: .from)
+            try container.encode(to, forKey: .to)
+            try container.encodeIfPresent(replyTo, forKey: .replyTo)
+            try container.encode(date, forKey: .date)
+            try container.encode(subject, forKey: .subject)
+            try container.encodeIfPresent(markdown, forKey: .markdown)
+            try container.encode(attachmentNames, forKey: .attachmentNames)
+            try container.encode(attachments, forKey: .attachments)
+        }
+    }
+
     private struct HookPayload: Codable, Sendable {
         let server: String
         let mailbox: String
-        let message: MessageHeader
-        let markdown: String?
+        let message: HookMessagePayload
     }
 
     private var connectionManager: IMAPConnectionManager
@@ -195,8 +262,8 @@ public actor PostServer {
                             Self.stderr("New message (catch-up) \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
                             logger.info("New message (catch-up) on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
                             if let command {
-                                let markdown = await Self.fetchMessageMarkdown(using: server, mailbox: mailbox, uid: msg.uid)
-                                Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: msg, markdown: markdown)
+                                let hookMessage = await Self.fetchHookMessagePayload(using: server, mailbox: mailbox, header: msg)
+                                Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: hookMessage)
                             }
                         }
                     }
@@ -222,8 +289,8 @@ public actor PostServer {
                                 Self.stderr("New message \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
                                 logger.info("New message on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
                                 if let command {
-                                    let markdown = await Self.fetchMessageMarkdown(using: server, mailbox: mailbox, uid: msg.uid)
-                                    Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: msg, markdown: markdown)
+                                    let hookMessage = await Self.fetchHookMessagePayload(using: server, mailbox: mailbox, header: msg)
+                                    Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: hookMessage)
                                 }
                             }
                         }
@@ -311,33 +378,166 @@ public actor PostServer {
         return formatter.string(from: date)
     }
 
-    /// Fetches and renders message body as markdown for hook payload delivery.
-    private static func fetchMessageMarkdown(using server: IMAPServer, mailbox: String, uid: Int) async -> String? {
-        guard (1...Int(UInt32.max)).contains(uid) else {
-            return nil
+    /// Fetches all hook-relevant message fields (headers, markdown body, attachment names).
+    private static func fetchHookMessagePayload(
+        using server: IMAPServer,
+        mailbox: String,
+        header: MessageHeader
+    ) async -> HookMessagePayload {
+        guard (1...Int(UInt32.max)).contains(header.uid) else {
+            return HookMessagePayload(
+                uid: header.uid,
+                from: header.from,
+                to: [],
+                replyTo: nil,
+                date: header.date,
+                subject: header.subject,
+                markdown: nil,
+                attachmentNames: [],
+                attachments: []
+            )
         }
 
         do {
             _ = try await server.selectMailbox(mailbox)
-            let identifier = UID(UInt32(uid))
-            let set = MessageIdentifierSet<UID>(identifier)
-
-            for try await message in server.fetchMessages(using: set) {
-                let detail = MessageDetail(
-                    uid: uid,
-                    from: message.from ?? "Unknown",
-                    to: message.to,
-                    subject: message.subject ?? "(No Subject)",
-                    date: formatLocalMediumDateTime(message.date),
-                    textBody: message.textBody,
-                    htmlBody: message.htmlBody,
-                    attachments: [],
-                    additionalHeaders: nil
+            let identifier = UID(UInt32(header.uid))
+            guard let messageInfo = try await server.fetchMessageInfo(for: identifier) else {
+                return HookMessagePayload(
+                    uid: header.uid,
+                    from: header.from,
+                    to: [],
+                    replyTo: nil,
+                    date: header.date,
+                    subject: header.subject,
+                    markdown: nil,
+                    attachmentNames: [],
+                    attachments: []
                 )
-                return try await detail.markdown()
+            }
+
+            let markdown = await fetchHookMarkdown(using: server, messageInfo: messageInfo)
+            let replyTo = extractReplyTo(from: messageInfo.additionalFields)
+            let attachmentParts = messageInfo.parts.filter(isAttachmentPart)
+            let attachments: [HookAttachmentPayload] = attachmentParts.map { part in
+                let filename = canonicalAttachmentFilename(part)
+                return HookAttachmentPayload(
+                    filename: filename,
+                    contentType: part.contentType,
+                    disposition: part.disposition,
+                    section: part.section.description,
+                    contentId: part.contentId,
+                    encoding: part.encoding,
+                    size: nil
+                )
+            }
+            let attachmentNames = attachments.map(\.filename)
+
+            let formattedDate = formatLocalMediumDateTime(messageInfo.date)
+            return HookMessagePayload(
+                uid: header.uid,
+                from: messageInfo.from ?? header.from,
+                to: messageInfo.to,
+                replyTo: replyTo,
+                date: formattedDate.isEmpty ? header.date : formattedDate,
+                subject: messageInfo.subject ?? header.subject,
+                markdown: markdown,
+                attachmentNames: attachmentNames,
+                attachments: attachments
+            )
+        } catch {
+            Self.stderr("Failed to fetch hook message details for \(mailbox) uid=\(header.uid): \(String(describing: error))")
+        }
+
+        return HookMessagePayload(
+            uid: header.uid,
+            from: header.from,
+            to: [],
+            replyTo: nil,
+            date: header.date,
+            subject: header.subject,
+            markdown: nil,
+            attachmentNames: [],
+            attachments: []
+        )
+    }
+
+    private static func canonicalAttachmentFilename(_ part: MessagePart) -> String {
+        let filename = part.filename?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (filename?.isEmpty == false) ? filename! : part.suggestedFilename
+    }
+
+    /// Returns true if a message part should be treated as a file attachment.
+    private static func isAttachmentPart(_ part: MessagePart) -> Bool {
+        let disposition = part.disposition?.lowercased()
+        let filename = part.filename?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasFilename = (filename?.isEmpty == false)
+        let isAttachment = disposition == "attachment"
+        let isInline = disposition == "inline"
+        let isCidOnly = part.contentId != nil && !isAttachment
+        return isAttachment || (hasFilename && !isInline && !isCidOnly)
+    }
+
+    /// Produces markdown by fetching only text/html body parts (no attachment download).
+    private static func fetchHookMarkdown(using server: IMAPServer, messageInfo: MessageInfo) async -> String? {
+        let textPart = messageInfo.parts.first { part in
+            part.contentType.lowercased().hasPrefix("text/plain")
+                && part.disposition?.lowercased() != "attachment"
+        }
+
+        let htmlPart = messageInfo.parts.first { part in
+            part.contentType.lowercased().hasPrefix("text/html")
+                && part.disposition?.lowercased() != "attachment"
+        }
+
+        var textBody: String?
+        var htmlBody: String?
+
+        do {
+            if let textPart {
+                let data = try await server.fetchAndDecodeMessagePartData(messageInfo: messageInfo, part: textPart)
+                textBody = String(data: data, encoding: .utf8)
+            }
+
+            if let htmlPart {
+                let data = try await server.fetchAndDecodeMessagePartData(messageInfo: messageInfo, part: htmlPart)
+                htmlBody = String(data: data, encoding: .utf8)
             }
         } catch {
-            Self.stderr("Failed to fetch markdown for \(mailbox) uid=\(uid): \(String(describing: error))")
+            Self.stderr("Failed to fetch body parts for markdown uid=\(messageInfo.uid?.value ?? 0): \(String(describing: error))")
+            return nil
+        }
+
+        guard textBody != nil || htmlBody != nil else { return nil }
+
+        let detail = MessageDetail(
+            uid: Int(messageInfo.uid?.value ?? 0),
+            from: messageInfo.from ?? "Unknown",
+            to: messageInfo.to,
+            subject: messageInfo.subject ?? "(No Subject)",
+            date: formatLocalMediumDateTime(messageInfo.date),
+            textBody: textBody,
+            htmlBody: htmlBody,
+            attachments: [],
+            additionalHeaders: messageInfo.additionalFields
+        )
+
+        do {
+            return try await detail.markdown()
+        } catch {
+            Self.stderr("Failed to convert body to markdown uid=\(messageInfo.uid?.value ?? 0): \(String(describing: error))")
+            return textBody
+        }
+    }
+
+    /// Extracts Reply-To header value (case-insensitive) from additional fields.
+    private static func extractReplyTo(from additionalFields: [String: String]?) -> String? {
+        guard let additionalFields else { return nil }
+
+        if let replyTo = additionalFields.first(where: { key, _ in
+            key.caseInsensitiveCompare("Reply-To") == .orderedSame
+        })?.value {
+            let trimmed = replyTo.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
         }
 
         return nil
@@ -369,8 +569,7 @@ public actor PostServer {
         _ command: String,
         serverId: String,
         mailbox: String,
-        message: MessageHeader,
-        markdown: String?
+        message: HookMessagePayload
     ) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -380,6 +579,10 @@ public actor PostServer {
         var env = ProcessInfo.processInfo.environment
         env["POST_UID"] = String(message.uid)
         env["POST_FROM"] = message.from
+        env["POST_TO"] = message.to.joined(separator: ", ")
+        if let replyTo = message.replyTo {
+            env["POST_REPLY_TO"] = replyTo
+        }
         env["POST_SUBJECT"] = message.subject
         env["POST_DATE"] = message.date
         env["POST_SERVER"] = serverId
@@ -400,7 +603,7 @@ public actor PostServer {
 
         do {
             try process.run()
-            let payload = HookPayload(server: serverId, mailbox: mailbox, message: message, markdown: markdown)
+            let payload = HookPayload(server: serverId, mailbox: mailbox, message: message)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             let json = try encoder.encode(payload)
