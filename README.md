@@ -59,33 +59,122 @@ swift build
 
 ### Configuration
 
-Create `.post.json` in your home directory (or the working directory):
+Post looks for `~/.post.json` on startup. This file defines your mail servers and daemon settings.
+
+#### Minimal example (Keychain credentials)
+
+```json
+{
+  "servers": {
+    "work": {},
+    "personal": {}
+  }
+}
+```
+
+Each key under `servers` is a server ID. Credentials are resolved from the macOS Keychain — use `post credential set` to store them:
+
+```bash
+post credential set --server work --host imap.company.com --port 993 --username you@company.com
+# You'll be prompted for the password, which is stored securely in a dedicated keychain
+```
+
+#### Full example (with IDLE and notifications)
 
 ```json
 {
   "servers": {
     "work": {
-      "command": "/path/to/notify-script.sh",
+      "idle": true,
+      "idleMailbox": "INBOX",
+      "command": "/path/to/on-new-mail.sh"
+    },
+    "gmail": {
       "idle": true,
       "idleMailbox": "INBOX"
     },
-    "personal": {
-      "idle": true,
-      "idleMailbox": "INBOX"
+    "archive": {
+      "idle": false
+    }
+  },
+  "httpPort": 8025
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `idle` | Keep a persistent IMAP IDLE connection to get instant new-mail notifications |
+| `idleMailbox` | Which mailbox to watch (default: `INBOX`) |
+| `command` | Script/binary to run when new mail arrives in the watched mailbox |
+| `credentials` | Optional inline credentials (see below) — Keychain is preferred |
+| `httpPort` | Enable HTTP+SSE transport on this port (in addition to Bonjour) |
+
+#### Inline credentials (non-Mac or testing)
+
+```json
+{
+  "servers": {
+    "dev": {
+      "credentials": {
+        "host": "imap.example.com",
+        "port": 993,
+        "username": "user@example.com",
+        "password": "secret"
+      }
     }
   }
 }
 ```
 
-Server credentials are resolved from the macOS Keychain (label = server id).
+Credential resolution order: **Keychain** → **inline `credentials`** → error.
 
-### Run the Daemon
+### Running the Daemon
+
+`postd` has four subcommands:
 
 ```bash
-.build/debug/postd
+postd start              # Start in foreground (default)
+postd start --daemonize  # Start in background
+postd stop               # Stop a running daemon (sends SIGTERM)
+postd status             # Check if the daemon is running
+postd reload             # Reload configuration (sends SIGHUP)
 ```
 
-Or install as a Launch Agent for automatic startup.
+The daemon writes its PID to `~/.post.pid` for lifecycle management.
+
+### Launch Agent (automatic startup)
+
+Create `~/Library/LaunchAgents/com.cocoanetics.postd.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.cocoanetics.postd</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/.build/release/postd</string>
+        <string>start</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardErrorPath</key>
+    <string>/tmp/postd.log</string>
+</dict>
+</plist>
+```
+
+Then load it:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.cocoanetics.postd.plist
+```
+
+To unload: `launchctl unload ~/Library/LaunchAgents/com.cocoanetics.postd.plist`
 
 ## Dependencies
 
