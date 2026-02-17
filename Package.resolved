@@ -137,6 +137,33 @@
       }
     },
     {
+      "identity" : "swiftmail",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Cocoanetics/SwiftMail",
+      "state" : {
+        "branch" : "main",
+        "revision" : "61a539bc06dbc5e6d4bc66bbe395d5970f15fbc7"
+      }
+    },
+    {
+      "identity" : "swiftmcp",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Cocoanetics/SwiftMCP",
+      "state" : {
+        "branch" : "main",
+        "revision" : "0d6aa8360f1cc60adec3bed2937d4200efa85c94"
+      }
+    },
+    {
+      "identity" : "swifttext",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Cocoanetics/SwiftText",
+      "state" : {
+        "branch" : "main",
+        "revision" : "bf075538bc745916ce012f63526f75cc8f595f8f"
+      }
+    },
+    {
       "identity" : "zipfoundation",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/weichsel/ZIPFoundation.git",

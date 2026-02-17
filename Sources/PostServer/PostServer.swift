@@ -253,6 +253,16 @@ public actor PostServer {
             return "CAPABILITY [\(caps.joined(separator: ", "))]"
         case .bye(let message):
             return "BYE \(message ?? "")"
+        case .vanished(let identifiers):
+            return "VANISHED ids=\(identifiers)"
+        case .flags(let flags):
+            let list = flags.map { String(describing: $0) }.joined(separator: ", ")
+            return "FLAGS [\(list)]"
+        case .fetchUID(let uid, let attributes):
+            let attrDesc = attributes.map { String(describing: $0) }.joined(separator: ", ")
+            return "FETCH UID=\(uid.value) attributes=[\(attrDesc)]"
+        @unknown default:
+            return "UNKNOWN EVENT: \(String(describing: event))"
         }
     }
 
@@ -962,3 +972,4 @@ public typealias PostProxy = PostServer.Client
 public extension PostServer.Client {
     static var serverName: String { "Post" }
 }
+
