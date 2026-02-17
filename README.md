@@ -17,14 +17,16 @@ The daemon doubles as an [MCP](https://modelcontextprotocol.io) (Model Context P
 ### `post` — The CLI
 A fast command-line client for searching, reading, downloading, and managing email. Communicates with the running daemon via local Bonjour + HTTP — no separate IMAP connections needed.
 
+```bash
+post list --server work --limit 10
+post fetch 12199 --server work
+post fetch 12198,12199 --eml --out ./backup
+post search --from "amazon" --since 2025-01-01
+post move 12345 Archive
+post attachment 12199 --out ./downloads
 ```
-post list --server drobnik --limit 10
-post fetch 12199 --server drobnik
-post fetch 12198,12199 --eml --out ./backup --server drobnik
-post search "invoice" --server gmail
-post move 12345 Archive --server drobnik
-post attachment 12199 --index 1 --out ./downloads --server drobnik
-```
+
+📖 **[Full CLI User Guide →](Documentation/CLI.md)**
 
 ## How It Works
 
@@ -45,137 +47,29 @@ The daemon holds all IMAP connections. Both the CLI and AI agents talk to the da
 - **Always up-to-date** — IDLE keeps mailbox state fresh
 - **Trigger scripts** — run custom commands when new mail arrives
 
-## Setup
+## Getting Started
 
 ### Requirements
 - macOS 14.0+
 - Swift 6.0+
 
-### Build
+### Build & Run
 
 ```bash
+# Build
 swift build
-```
 
-### Configuration
-
-Post looks for `~/.post.json` on startup. This file defines your mail servers and daemon settings.
-
-#### Minimal example (Keychain credentials)
-
-```json
-{
-  "servers": {
-    "work": {},
-    "personal": {}
-  }
-}
-```
-
-Each key under `servers` is a server ID. Credentials are resolved from the macOS Keychain — use `post credential set` to store them:
-
-```bash
+# Configure a server
 post credential set --server work --host imap.company.com --port 993 --username you@company.com
-# You'll be prompted for the password, which is stored securely in a dedicated keychain
+
+# Create config
+echo '{ "servers": { "work": {} } }' > ~/.post.json
+
+# Start the daemon
+postd start
 ```
 
-#### Full example (with IDLE and notifications)
-
-```json
-{
-  "servers": {
-    "work": {
-      "idle": true,
-      "idleMailbox": "INBOX",
-      "command": "/path/to/on-new-mail.sh"
-    },
-    "gmail": {
-      "idle": true,
-      "idleMailbox": "INBOX"
-    },
-    "archive": {
-      "idle": false
-    }
-  },
-  "httpPort": 8025
-}
-```
-
-| Field | Description |
-|-------|-------------|
-| `idle` | Optional. Enable a persistent IMAP IDLE connection for instant change notifications |
-| `idleMailbox` | Which mailbox to watch — can be any folder, not just INBOX (default: `INBOX`) |
-| `command` | Script/binary to run when a change is detected in the watched mailbox |
-| `credentials` | Optional inline credentials (see below) — Keychain is preferred |
-| `httpPort` | Enable HTTP+SSE transport on this port (in addition to Bonjour) |
-
-#### Inline credentials (non-Mac or testing)
-
-```json
-{
-  "servers": {
-    "dev": {
-      "credentials": {
-        "host": "imap.example.com",
-        "port": 993,
-        "username": "user@example.com",
-        "password": "secret"
-      }
-    }
-  }
-}
-```
-
-Credential resolution order: **Keychain** → **inline `credentials`** → error.
-
-### Running the Daemon
-
-`postd` has four subcommands:
-
-```bash
-postd start              # Start in background (default)
-postd start --foreground # Start in foreground (useful for debugging)
-postd stop               # Stop a running daemon (sends SIGTERM)
-postd status             # Check if the daemon is running
-postd reload             # Reload configuration (sends SIGHUP)
-```
-
-The daemon writes its PID to `~/.post.pid` for lifecycle management.
-
-### Launch Agent (automatic startup)
-
-Create `~/Library/LaunchAgents/com.cocoanetics.postd.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.cocoanetics.postd</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/path/to/.build/release/postd</string>
-        <string>start</string>
-        <string>--foreground</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardErrorPath</key>
-    <string>/tmp/postd.log</string>
-</dict>
-</plist>
-```
-
-Then load it:
-
-```bash
-launchctl load ~/Library/LaunchAgents/com.cocoanetics.postd.plist
-```
-
-To unload: `launchctl unload ~/Library/LaunchAgents/com.cocoanetics.postd.plist`
+📖 **[Daemon Setup & Configuration →](Documentation/Daemon.md)** — configuration options, IMAP IDLE, Launch Agent setup, credential management
 
 ## Dependencies
 
