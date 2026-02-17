@@ -1,4 +1,5 @@
 import ArgumentParser
+import Darwin
 import Foundation
 import PostServer
 import SwiftMail
@@ -700,9 +701,13 @@ extension PostCLI {
 
             let client = PostProxy(proxy: proxy)
             do {
-                _ = try await client.watchIdleEvents()
+                try await client.watchIdleEvents()
             } catch is CancellationError {
                 // Expected on Ctrl+C
+            } catch {
+                fputs("\(error.localizedDescription)\n", stderr)
+                await proxy.disconnect()
+                Darwin.exit(1)
             }
 
             await proxy.disconnect()

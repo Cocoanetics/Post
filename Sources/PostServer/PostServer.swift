@@ -15,6 +15,7 @@ public enum PostServerError: Error, LocalizedError, Sendable {
     case noAttachments(uid: Int)
     case attachmentNotFound(filename: String, uid: Int)
     case attachmentDataMissing(filename: String)
+    case noIdleEnabledServers
     case noSession
 
     public var errorDescription: String? {
@@ -39,6 +40,8 @@ public enum PostServerError: Error, LocalizedError, Sendable {
             return "Attachment '\(filename)' not found in message UID \(uid)."
         case .attachmentDataMissing(let filename):
             return "Could not decode attachment data for '\(filename)'."
+        case .noIdleEnabledServers:
+            return "No servers configured with `idle: true` in ~/.post.json."
         case .noSession:
             return "No active MCP session."
         }
@@ -47,14 +50,17 @@ public enum PostServerError: Error, LocalizedError, Sendable {
 
 @MCPServer(name: "Post", generateClient: true)
 public actor PostServer {
+    private struct HookPayload: Codable, Sendable {
+        let server: String
+        let mailbox: String
+        let message: MessageHeader
+        let markdown: String?
+    }
+
     private var connectionManager: IMAPConnectionManager
     private let logger = Logger(label: "com.cocoanetics.Post.PostServer")
 
     private var idleWatchTasks: [String: Task<Void, Never>] = [:]
-
-    /// Sessions watching IDLE events (from watchIdleEvents tool calls).
-    /// Values are per-session stream continuations consumed by the active tool-call task.
-    private var idleWatchers: [UUID: AsyncStream<LogMessage>.Continuation] = [:]
 
     private static func stderr(_ message: String) {
         if let data = ("[postd] \(message)\n").data(using: .utf8) {
@@ -73,8 +79,35 @@ public actor PostServer {
     /// Starts configured IMAP IDLE watches (dedicated connections via SwiftMail) for servers
     /// that have `idle: true` in ~/.post.json.
     public func startIdleWatches() async {
+        let watchConfigurations = await configuredIdleWatches()
+        for watchConfiguration in watchConfigurations {
+            if idleWatchTasks[watchConfiguration.serverId] != nil {
+                stderr("IDLE watch already running for server=\(watchConfiguration.serverId)")
+                continue
+            }
+
+            stderr("Starting IDLE watch for server=\(watchConfiguration.serverId) mailbox=\(watchConfiguration.mailbox) command=\(watchConfiguration.command ?? "<nil>")")
+            logger.info("Starting IDLE watch for server=\(watchConfiguration.serverId) mailbox=\(watchConfiguration.mailbox)")
+
+            let manager = connectionManager
+            idleWatchTasks[watchConfiguration.serverId] = Task.detached {
+                await Self.runIdleWatch(
+                    serverId: watchConfiguration.serverId,
+                    mailbox: watchConfiguration.mailbox,
+                    command: watchConfiguration.command,
+                    connectionManager: manager
+                )
+            }
+        }
+    }
+
+    /// Resolves all configured daemon IDLE watches from current configuration.
+    private func configuredIdleWatches() async -> [IdleWatchConfiguration] {
         let infos = await connectionManager.serverInfos()
         stderr("startIdleWatches: found \(infos.count) servers")
+
+        var watchConfigurations: [IdleWatchConfiguration] = []
+        watchConfigurations.reserveCapacity(infos.count)
 
         for info in infos {
             guard let config = try? await connectionManager.resolveServerConfiguration(serverId: info.id) else {
@@ -87,27 +120,10 @@ public actor PostServer {
             }
 
             let mailbox = (config.idleMailbox?.isEmpty == false) ? (config.idleMailbox!) : "INBOX"
-            let command = config.command
-
-            if idleWatchTasks[info.id] != nil {
-                stderr("IDLE watch already running for server=\(info.id)")
-                continue
-            }
-
-            stderr("Starting IDLE watch for server=\(info.id) mailbox=\(mailbox) command=\(command ?? "<nil>")")
-            logger.info("Starting IDLE watch for server=\(info.id) mailbox=\(mailbox)")
-            
-            let manager = connectionManager
-            idleWatchTasks[info.id] = Task.detached { [weak self] in
-                await Self.runIdleWatch(
-                    serverId: info.id,
-                    mailbox: mailbox,
-                    command: command,
-                    connectionManager: manager,
-                    postServer: self
-                )
-            }
+            watchConfigurations.append(IdleWatchConfiguration(serverId: info.id, mailbox: mailbox, command: config.command))
         }
+
+        return watchConfigurations
     }
 
     /// Runs IDLE watch off the actor so the event loop doesn't block MCP requests.
@@ -116,8 +132,7 @@ public actor PostServer {
         serverId: String,
         mailbox: String,
         command: String?,
-        connectionManager: IMAPConnectionManager,
-        postServer: PostServer?
+        connectionManager: IMAPConnectionManager
     ) async {
         let logger = Logger(label: "com.cocoanetics.Post.IDLE.\(serverId)")
 
@@ -180,7 +195,8 @@ public actor PostServer {
                             Self.stderr("New message (catch-up) \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
                             logger.info("New message (catch-up) on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
                             if let command {
-                                Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: msg)
+                                let markdown = await Self.fetchMessageMarkdown(using: server, mailbox: mailbox, uid: msg.uid)
+                                Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: msg, markdown: markdown)
                             }
                         }
                     }
@@ -195,13 +211,6 @@ public actor PostServer {
                     let eventDescription = Self.describeIdleEvent(event)
                     Self.stderr("IDLE event for \(serverId)/\(mailbox): \(eventDescription)")
 
-                    // Send event to all watching sessions
-                    if let postServer {
-                        await postServer.notifyIdleWatchers(serverId: serverId, mailbox: mailbox, description: eventDescription)
-                    } else {
-                        Self.stderr("IDLE WARNING: postServer is nil, cannot notify watchers")
-                    }
-
                     switch event {
                     case .exists(let count):
                         Self.stderr("IDLE EXISTS for \(serverId)/\(mailbox): count=\(count) lastSeenUID=\(lastSeenUID)")
@@ -212,9 +221,9 @@ public actor PostServer {
                                 lastSeenUID = msg.uid
                                 Self.stderr("New message \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
                                 logger.info("New message on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
-                                await postServer?.notifyIdleWatchers(serverId: serverId, mailbox: mailbox, description: "NEW uid=\(msg.uid) from=\(msg.from) subject=\(msg.subject)")
                                 if let command {
-                                    Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: msg)
+                                    let markdown = await Self.fetchMessageMarkdown(using: server, mailbox: mailbox, uid: msg.uid)
+                                    Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: msg, markdown: markdown)
                                 }
                             }
                         }
@@ -274,25 +283,6 @@ public actor PostServer {
         }
     }
 
-    /// Sends an IDLE event to all watching sessions.
-    private func notifyIdleWatchers(serverId: String, mailbox: String, description: String) async {
-        guard !idleWatchers.isEmpty else { return }
-
-        let message = LogMessage(
-            level: .info,
-            logger: "idle",
-            data: AnyCodable([
-                "server": serverId,
-                "mailbox": mailbox,
-                "event": description
-            ] as [String: String])
-        )
-
-        for continuation in idleWatchers.values {
-            continuation.yield(message)
-        }
-    }
-
     /// Fetches new messages using a dedicated IDLE connection (no actor hop).
     private static func fetchNewMessages(using server: IMAPServer, mailbox: String, minUID: Int) async throws -> [MessageHeader] {
         _ = try await server.selectMailbox(mailbox)
@@ -305,9 +295,52 @@ public actor PostServer {
                 uid: uidInt,
                 from: info.from ?? "Unknown",
                 subject: info.subject ?? "(No Subject)",
-                date: info.date?.description ?? ""
+                date: formatLocalMediumDateTime(info.date)
             )
         }
+    }
+
+    /// Formats dates for hook payloads in the current user's locale and time zone.
+    private static func formatLocalMediumDateTime(_ date: Date?) -> String {
+        guard let date else { return "" }
+        let formatter = DateFormatter()
+        formatter.locale = .autoupdatingCurrent
+        formatter.timeZone = .autoupdatingCurrent
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .medium
+        return formatter.string(from: date)
+    }
+
+    /// Fetches and renders message body as markdown for hook payload delivery.
+    private static func fetchMessageMarkdown(using server: IMAPServer, mailbox: String, uid: Int) async -> String? {
+        guard (1...Int(UInt32.max)).contains(uid) else {
+            return nil
+        }
+
+        do {
+            _ = try await server.selectMailbox(mailbox)
+            let identifier = UID(UInt32(uid))
+            let set = MessageIdentifierSet<UID>(identifier)
+
+            for try await message in server.fetchMessages(using: set) {
+                let detail = MessageDetail(
+                    uid: uid,
+                    from: message.from ?? "Unknown",
+                    to: message.to,
+                    subject: message.subject ?? "(No Subject)",
+                    date: formatLocalMediumDateTime(message.date),
+                    textBody: message.textBody,
+                    htmlBody: message.htmlBody,
+                    attachments: [],
+                    additionalHeaders: nil
+                )
+                return try await detail.markdown()
+            }
+        } catch {
+            Self.stderr("Failed to fetch markdown for \(mailbox) uid=\(uid): \(String(describing: error))")
+        }
+
+        return nil
     }
 
     /// Fetches messages with UID >= minUID
@@ -332,9 +365,17 @@ public actor PostServer {
         }
     }
 
-    private static func executeHookCommand(_ command: String, serverId: String, mailbox: String, message: MessageHeader) {
+    private static func executeHookCommand(
+        _ command: String,
+        serverId: String,
+        mailbox: String,
+        message: MessageHeader,
+        markdown: String?
+    ) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        let stdinPipe = Pipe()
+        process.standardInput = stdinPipe
 
         var env = ProcessInfo.processInfo.environment
         env["POST_UID"] = String(message.uid)
@@ -359,8 +400,16 @@ public actor PostServer {
 
         do {
             try process.run()
+            let payload = HookPayload(server: serverId, mailbox: mailbox, message: message, markdown: markdown)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let json = try encoder.encode(payload)
+            try stdinPipe.fileHandleForWriting.write(contentsOf: json)
+            try stdinPipe.fileHandleForWriting.write(contentsOf: Data([0x0A]))
+            try stdinPipe.fileHandleForWriting.close()
         } catch {
             Self.stderr("Failed to execute hook for \(serverId)/\(mailbox) uid=\(message.uid): \(String(describing: error))")
+            try? stdinPipe.fileHandleForWriting.close()
         }
     }
 
@@ -790,51 +839,49 @@ public actor PostServer {
     /// Watches IMAP IDLE events in real time. Events are delivered as MCP log notifications.
     /// This is a long-running tool call — it blocks until the client disconnects.
     @MCPTool
-    public func watchIdleEvents() async throws -> String {
+    public func watchIdleEvents() async throws {
         guard let session = Session.current else {
             throw PostServerError.noSession
         }
 
-        let sessionId = await session.id
-        var continuationRef: AsyncStream<LogMessage>.Continuation?
-        let eventStream = AsyncStream<LogMessage> { continuation in
-            continuationRef = continuation
+        let watchConfigurations = await configuredIdleWatches()
+        guard !watchConfigurations.isEmpty else {
+            throw PostServerError.noIdleEnabledServers
         }
-        guard let continuation = continuationRef else {
-            throw PostServerError.noSession
-        }
-        idleWatchers[sessionId] = continuation
-        defer {
-            idleWatchers.removeValue(forKey: sessionId)
-            continuation.finish()
-        }
+
+        let activeTargets = watchConfigurations
+            .map { "\($0.serverId)/\($0.mailbox)" }
+            .sorted()
+            .joined(separator: ", ")
 
         await session.sendLogNotification(LogMessage(
             level: .info,
             logger: "idle",
             data: AnyCodable("Subscribed to IDLE events. Waiting for changes...")
         ))
+        await session.sendLogNotification(LogMessage(
+            level: .info,
+            logger: "idle",
+            data: AnyCodable("Watching raw IDLE events on \(watchConfigurations.count) mailbox(es): \(activeTargets)")
+        ))
 
-        if idleWatchTasks.isEmpty {
-            await session.sendLogNotification(LogMessage(
-                level: .warning,
-                logger: "idle",
-                data: AnyCodable("No active daemon IDLE watches. Enable `idle: true` in ~/.post.json and reload postd.")
-            ))
-        } else {
-            let activeServers = idleWatchTasks.keys.sorted().joined(separator: ", ")
+        let eventStream = watchConfigurations
+            .idleEventStreams(using: connectionManager)
+            .mergedIdleEventStream()
+
+        // Forward raw IDLE events while the tool call is active.
+        for await rawEvent in eventStream {
+            if Task.isCancelled { break }
             await session.sendLogNotification(LogMessage(
                 level: .info,
                 logger: "idle",
-                data: AnyCodable("Active daemon IDLE watches: \(idleWatchTasks.count) (\(activeServers))")
+                data: AnyCodable([
+                    "server": rawEvent.serverId,
+                    "mailbox": rawEvent.mailbox,
+                    "event": Self.describeIdleEvent(rawEvent.event)
+                ] as [String: String])
             ))
         }
-
-        // Forward queued IDLE events while the tool call is active.
-        for await message in eventStream {
-            await session.sendLogNotification(message)
-        }
-        return "Stopped watching IDLE events."
     }
 
     private func withServer<T>(serverId: String, operation: (IMAPServer) async throws -> T) async throws -> T {
