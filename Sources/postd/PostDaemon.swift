@@ -75,18 +75,6 @@ extension PostDaemon {
                 try PIDFileManager.writeCurrentPID()
                 logToStderr("PID written to \(PIDFileManager.pidURL.path)")
 
-                // Wire up IDLE event broadcasting to all connected MCP clients.
-                let capturedTransports = transports
-                await server.setIdleLogBroadcaster { message in
-                    for transport in capturedTransports {
-                        if let tcp = transport as? TCPBonjourTransport {
-                            await tcp.broadcastLog(message)
-                        } else if let http = transport as? HTTPSSETransport {
-                            await http.broadcastLog(message)
-                        }
-                    }
-                }
-
                 // Start configured IMAP IDLE watches (dedicated connections; does not interfere with primary).
                 Task {
                     await server.startIdleWatches()
