@@ -766,6 +766,10 @@ public actor PostServer {
         }
     }
 
+    /// Downloads the raw RFC 822 source of a single message as .eml data.
+    /// - Parameter serverId: The server identifier
+    /// - Parameter uid: The message UID
+    /// - Parameter mailbox: Mailbox name (default: "INBOX")
     @MCPTool
     public func downloadEml(serverId: String, uid: Int, mailbox: String = "INBOX") async throws -> Data {
         guard (1...Int(UInt32.max)).contains(uid) else {
