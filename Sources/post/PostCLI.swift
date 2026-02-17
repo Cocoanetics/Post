@@ -667,16 +667,31 @@ extension PostCLI {
 
             try await proxy.connect()
 
+            // Set log level to debug so we receive all IDLE notifications
+            let setLevelRequest = JSONRPCMessage.request(
+                id: UUID().uuidString,
+                method: "logging/setLevel",
+                params: ["level": AnyCodable("debug")]
+            )
+            _ = try await proxy.send(setLevelRequest)
+
             fputs("Connected to postd. Watching IDLE events (Ctrl+C to stop)...\n", stderr)
 
-            // Call watchIdleEvents — this blocks until we disconnect
-            let client = PostProxy(proxy: proxy)
-            do {
-                _ = try await client.watchIdleEvents()
-            } catch is CancellationError {
-                // Expected on Ctrl+C
+            // Block until Ctrl+C (SIGINT/SIGTERM)
+            let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+            let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+            signal(SIGINT, SIG_IGN)
+            signal(SIGTERM, SIG_IGN)
+
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                sigint.setEventHandler { continuation.resume() }
+                sigterm.setEventHandler { continuation.resume() }
+                sigint.resume()
+                sigterm.resume()
             }
 
+            sigint.cancel()
+            sigterm.cancel()
             await proxy.disconnect()
         }
     }

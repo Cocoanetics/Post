@@ -15,7 +15,6 @@ public enum PostServerError: Error, LocalizedError, Sendable {
     case noAttachments(uid: Int)
     case attachmentNotFound(filename: String, uid: Int)
     case attachmentDataMissing(filename: String)
-    case noSession
 
     public var errorDescription: String? {
         switch self {
@@ -39,11 +38,13 @@ public enum PostServerError: Error, LocalizedError, Sendable {
             return "Attachment '\(filename)' not found in message UID \(uid)."
         case .attachmentDataMissing(let filename):
             return "Could not decode attachment data for '\(filename)'."
-        case .noSession:
-            return "No active MCP session."
         }
     }
 }
+
+/// Callback for broadcasting IDLE events to all connected MCP clients.
+/// Parameters: logger name, LogMessage to broadcast.
+public typealias IdleLogBroadcaster = @Sendable (LogMessage) async -> Void
 
 @MCPServer(name: "Post", generateClient: true)
 public actor PostServer {
@@ -52,8 +53,14 @@ public actor PostServer {
 
     private var idleWatchTasks: [String: Task<Void, Never>] = [:]
 
-    /// Sessions subscribed to IDLE event notifications.
-    private var idleEventSubscribers: [UUID: Session] = [:]
+    /// Callback to broadcast log messages to all connected MCP sessions.
+    /// Set by the daemon to wire up transport-level broadcasting.
+    private var idleLogBroadcaster: IdleLogBroadcaster?
+
+    /// Sets the callback for broadcasting IDLE events to all connected MCP clients.
+    public func setIdleLogBroadcaster(_ broadcaster: @escaping IdleLogBroadcaster) {
+        self.idleLogBroadcaster = broadcaster
+    }
 
     private static func stderr(_ message: String) {
         if let data = ("[postd] \(message)\n").data(using: .utf8) {
@@ -97,13 +104,14 @@ public actor PostServer {
             logger.info("Starting IDLE watch for server=\(info.id) mailbox=\(mailbox)")
             
             let manager = connectionManager
-            idleWatchTasks[info.id] = Task.detached { [weak self] in
+            let broadcaster = idleLogBroadcaster
+            idleWatchTasks[info.id] = Task.detached {
                 await Self.runIdleWatch(
                     serverId: info.id,
                     mailbox: mailbox,
                     command: command,
                     connectionManager: manager,
-                    postServer: self
+                    broadcaster: broadcaster
                 )
             }
         }
@@ -116,7 +124,7 @@ public actor PostServer {
         mailbox: String,
         command: String?,
         connectionManager: IMAPConnectionManager,
-        postServer: PostServer?
+        broadcaster: IdleLogBroadcaster?
     ) async {
         let logger = Logger(label: "com.cocoanetics.Post.IDLE.\(serverId)")
 
@@ -190,9 +198,9 @@ public actor PostServer {
                 for await event in idleSession.events {
                     if Task.isCancelled { break }
 
-                    // Broadcast event description to MCP log subscribers
+                    // Broadcast event description to all connected MCP clients
                     let eventDescription = Self.describeIdleEvent(event)
-                    await postServer?.broadcastIdleEvent(serverId: serverId, mailbox: mailbox, description: eventDescription)
+                    await broadcaster?(Self.makeIdleLogMessage(serverId: serverId, mailbox: mailbox, description: eventDescription))
 
                     switch event {
                     case .exists(let count):
@@ -204,7 +212,7 @@ public actor PostServer {
                                 lastSeenUID = msg.uid
                                 Self.stderr("New message \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
                                 logger.info("New message on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
-                                await postServer?.broadcastIdleEvent(serverId: serverId, mailbox: mailbox, description: "NEW uid=\(msg.uid) from=\(msg.from) subject=\(msg.subject)")
+                                await broadcaster?(Self.makeIdleLogMessage(serverId: serverId, mailbox: mailbox, description: "NEW uid=\(msg.uid) from=\(msg.from) subject=\(msg.subject)"))
                                 if let command {
                                     Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: msg)
                                 }
@@ -256,19 +264,9 @@ public actor PostServer {
         }
     }
 
-    /// Subscribes a session to receive IDLE event notifications via MCP logging.
-    private func subscribeToIdleEvents(sessionId: UUID, session: Session) {
-        idleEventSubscribers[sessionId] = session
-    }
-
-    /// Unsubscribes a session from IDLE event notifications.
-    private func unsubscribeFromIdleEvents(sessionId: UUID) {
-        idleEventSubscribers.removeValue(forKey: sessionId)
-    }
-
-    /// Broadcasts an IDLE event to all subscribed sessions as an MCP log notification.
-    fileprivate func broadcastIdleEvent(serverId: String, mailbox: String, description: String) async {
-        let message = LogMessage(
+    /// Creates a LogMessage for an IDLE event.
+    private static func makeIdleLogMessage(serverId: String, mailbox: String, description: String) -> LogMessage {
+        LogMessage(
             level: .info,
             logger: "idle",
             data: AnyCodable([
@@ -277,15 +275,6 @@ public actor PostServer {
                 "event": description
             ] as [String: String])
         )
-
-        for (id, session) in idleEventSubscribers {
-            // Clean up stale sessions
-            if await session.transport == nil {
-                idleEventSubscribers.removeValue(forKey: id)
-                continue
-            }
-            await session.sendLogNotification(message)
-        }
     }
 
     /// Fetches new messages using a dedicated IDLE connection (no actor hop).
@@ -780,43 +769,6 @@ public actor PostServer {
             let uid = UID(UInt32(uid))
             return try await server.fetchRawMessage(identifier: uid)
         }
-    }
-
-    /// Subscribes to real-time IMAP IDLE events from all watched servers.
-    /// Events are delivered as MCP log notifications (logger: "idle").
-    /// The call blocks until the client disconnects.
-    @MCPTool
-    public func watchIdleEvents() async throws -> String {
-        guard let session = Session.current else {
-            throw PostServerError.noSession
-        }
-
-        // Set minimum log level to debug so all events come through
-        let sessionId = await session.id
-        await session.setMinimumLogLevel(.debug)
-
-        subscribeToIdleEvents(sessionId: sessionId, session: session)
-
-        // Block until the task is cancelled (client disconnects / Ctrl+C)
-        defer {
-            Task { [weak self] in
-                await self?.unsubscribeFromIdleEvents(sessionId: sessionId)
-            }
-        }
-
-        // Send initial confirmation
-        await session.sendLogNotification(LogMessage(
-            level: .info,
-            logger: "idle",
-            data: AnyCodable("Subscribed to IDLE events. Waiting for changes...")
-        ))
-
-        // Keep alive until cancelled
-        while !Task.isCancelled {
-            try await Task.sleep(nanoseconds: 1_000_000_000)
-        }
-
-        return "Unsubscribed from IDLE events."
     }
 
     private func withServer<T>(serverId: String, operation: (IMAPServer) async throws -> T) async throws -> T {
