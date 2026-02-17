@@ -3,6 +3,32 @@ import Foundation
 import PostServer
 import SwiftMail
 import SwiftMCP
+@preconcurrency import AnyCodable
+
+/// Prints IDLE event log notifications from the daemon to stdout.
+private final class IdleEventLogger: MCPServerProxyLogNotificationHandling, @unchecked Sendable {
+    private let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
+    func mcpServerProxy(_ proxy: MCPServerProxy, didReceiveLog message: LogMessage) async {
+        let timestamp = dateFormatter.string(from: Date())
+
+        // Try to extract structured data (server, mailbox, event)
+        if let dict = message.data.value as? [String: Any],
+           let server = dict["server"] as? String,
+           let mailbox = dict["mailbox"] as? String,
+           let event = dict["event"] as? String {
+            fputs("[\(timestamp)] \(server)/\(mailbox): \(event)\n", stderr)
+        } else if let text = message.data.value as? String {
+            fputs("[\(timestamp)] \(text)\n", stderr)
+        } else {
+            fputs("[\(timestamp)] \(message.data)\n", stderr)
+        }
+    }
+}
 
 @main
 struct PostCLI: AsyncParsableCommand {
@@ -631,86 +657,27 @@ extension PostCLI {
     }
 
     struct Idle: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Watch for new messages (polls via MCP)")
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Mailbox name")
-        var mailbox: String = "INBOX"
-
-        @Option(name: .long, help: "Poll interval in seconds")
-        var interval: Int = 10
-
-        @Option(name: .long, help: "Command to execute on new message (supports {uid}, {from}, {subject}, {date})")
-        var exec: String?
+        static let configuration = CommandConfiguration(abstract: "Watch IMAP IDLE events in real time (debug tool)")
 
         func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                print("Watching \(mailbox) on \(serverId) (poll every \(interval)s, Ctrl+C to stop)...")
+            let tcpConfig = MCPServerTcpConfig(serviceName: PostProxy.serverName)
+            let proxy = MCPServerProxy(config: .tcp(config: tcpConfig))
 
-                // Resolve command from flag or server config
-                let servers = try await client.listServers()
-                let configCommand = servers.first(where: { $0.id == serverId })?.command
-                let activeCommand = exec ?? configCommand
+            await proxy.setLogNotificationHandler(IdleEventLogger())
 
-                if let cmd = activeCommand {
-                    print("Action: \(cmd)")
-                }
+            try await proxy.connect()
 
-                var knownUIDs: Set<Int> = []
+            fputs("Connected to postd. Watching IDLE events (Ctrl+C to stop)...\n", stderr)
 
-                // Initial fetch to establish baseline
-                let initial = try await client.listMessages(serverId: serverId, mailbox: mailbox, limit: 20)
-                for msg in initial {
-                    knownUIDs.insert(msg.uid)
-                }
-                print("Baseline: \(knownUIDs.count) messages")
-
-                while !Task.isCancelled {
-                    try await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)
-
-                    let current = try await client.listMessages(serverId: serverId, mailbox: mailbox, limit: 20)
-                    for msg in current {
-                        if !knownUIDs.contains(msg.uid) {
-                            knownUIDs.insert(msg.uid)
-                            print("🔔 New: [\(msg.uid)] \(msg.date) - \(msg.from)")
-                            print("   \(msg.subject)")
-
-                            if let execCommand = activeCommand {
-                                try await executeCommand(execCommand, message: msg)
-                            }
-                        }
-                    }
-                }
+            // Call watchIdleEvents — this blocks until we disconnect
+            let client = PostProxy(proxy: proxy)
+            do {
+                _ = try await client.watchIdleEvents()
+            } catch is CancellationError {
+                // Expected on Ctrl+C
             }
-        }
 
-        private func executeCommand(_ command: String, message: MessageHeader) async throws {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            
-            // Pass data via environment variables for safety
-            var env = ProcessInfo.processInfo.environment
-            env["POST_UID"] = String(message.uid)
-            env["POST_FROM"] = message.from
-            env["POST_SUBJECT"] = message.subject
-            env["POST_DATE"] = message.date
-            process.environment = env
-            
-            // Replace placeholders with environment variable references
-            let safeCommand = command
-                .replacingOccurrences(of: "{uid}", with: "$POST_UID")
-                .replacingOccurrences(of: "{from}", with: "$POST_FROM")
-                .replacingOccurrences(of: "{subject}", with: "$POST_SUBJECT")
-                .replacingOccurrences(of: "{date}", with: "$POST_DATE")
-
-            print("Executing: \(safeCommand)")
-            
-            process.arguments = ["-c", safeCommand]
-            
-            try process.run()
+            await proxy.disconnect()
         }
     }
 
