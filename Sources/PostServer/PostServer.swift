@@ -16,8 +16,10 @@ public enum PostServerError: Error, LocalizedError, Sendable {
     case attachmentNotFound(filename: String, uid: Int)
     case attachmentDataMissing(filename: String)
     case noIdleEnabledServers
+    case emptyBody(uid: Int)
     case fileNotFound(String)
     case noGlobMatches(String)
+    case unsupportedPlatform(String)
     case noSession
 
     public var errorDescription: String? {
@@ -44,10 +46,14 @@ public enum PostServerError: Error, LocalizedError, Sendable {
             return "Could not decode attachment data for '\(filename)'."
         case .noIdleEnabledServers:
             return "No servers configured with `idle: true` in ~/.post.json."
+        case .emptyBody(let uid):
+            return "Message UID \(uid) has no text or HTML body to export."
         case .fileNotFound(let path):
             return "File not found: '\(path)'."
         case .noGlobMatches(let pattern):
             return "No files matched the pattern '\(pattern)'."
+        case .unsupportedPlatform(let reason):
+            return reason
         case .noSession:
             return "No active MCP session."
         }
@@ -1037,6 +1043,53 @@ public actor PostServer {
         }
     }
 
+    /// Exports a message body as PDF data (base64-encoded).
+    /// Uses HTML body if available, otherwise converts text body from Markdown to HTML first.
+    /// - Parameter serverId: The server identifier
+    /// - Parameter uid: The message UID
+    /// - Parameter mailbox: Mailbox name (default: "INBOX")
+    /// - Returns: Base64-encoded PDF data
+    @MCPTool
+    public func exportPDF(serverId: String, uid: Int, mailbox: String = "INBOX") async throws -> AttachmentData {
+        #if os(macOS)
+        guard (1...Int(UInt32.max)).contains(uid) else {
+            throw PostServerError.invalidUID(uid)
+        }
+
+        return try await withServer(serverId: serverId) { server in
+            _ = try await server.selectMailbox(mailbox)
+            let set = MessageIdentifierSet<UID>(UID(UInt32(uid)))
+
+            for try await message in server.fetchMessages(using: set) {
+                let html: String
+
+                if let htmlBody = message.htmlBody, !htmlBody.isEmpty {
+                    html = htmlBody
+                } else if let textBody = message.textBody, !textBody.isEmpty {
+                    html = MarkdownToHTML.convert(textBody)
+                } else {
+                    throw PostServerError.emptyBody(uid: uid)
+                }
+
+                let subject = message.subject ?? "message-\(uid)"
+                let filename = Self.sanitizeFilename(subject) + ".pdf"
+
+                let pdfData = try await HTMLToPDF.render(html: html)
+                return AttachmentData(
+                    filename: filename,
+                    contentType: "application/pdf",
+                    data: pdfData.base64EncodedString(),
+                    size: pdfData.count
+                )
+            }
+
+            throw PostServerError.messageNotFound(uid: uid, mailbox: mailbox)
+        }
+        #else
+        throw PostServerError.unsupportedPlatform("PDF export requires macOS")
+        #endif
+    }
+
     /// Creates a new email draft and appends it to the Drafts mailbox.
     /// - Parameter serverId: The server identifier
     /// - Parameter from: Sender email address
@@ -1173,6 +1226,13 @@ public actor PostServer {
                 ] as [String: String])
             ))
         }
+    }
+
+    /// Sanitizes a string for use as a filename.
+    private static func sanitizeFilename(_ name: String) -> String {
+        let cleaned = name.replacingOccurrences(of: "[/\\\\:*?\"<>|]", with: "-", options: .regularExpression)
+        let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "message" : String(trimmed.prefix(100))
     }
 
     /// Expands a glob pattern (e.g. `~/docs/*.pdf`) into matching file paths.

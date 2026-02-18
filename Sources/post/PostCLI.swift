@@ -82,6 +82,7 @@ struct PostCLI: AsyncParsableCommand {
             Quota.self,
             Attachment.self,
             Draft.self,
+            PDF.self,
             Idle.self,
             Credential.self
         ]
@@ -682,6 +683,63 @@ extension PostCLI {
                 let destination = outputDir.appendingPathComponent(attachment.filename)
                 try data.write(to: destination)
                 print("Saved \(attachment.filename) (\(attachment.contentType), \(formatBytes(attachment.size))) to \(destination.path)")
+            }
+        }
+    }
+
+    struct PDF: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "pdf",
+            abstract: "Export message body as PDF"
+        )
+
+        @Argument(help: "Message UID(s) (comma-separated; ranges like 1-3 allowed)")
+        var uid: String
+
+        @Option(name: .long, help: "Server identifier")
+        var server: String?
+
+        @Option(name: .long, help: "Mailbox name")
+        var mailbox: String = "INBOX"
+
+        @Option(name: .long, help: "Output directory (default: current directory)")
+        var out: String = "."
+
+        func validate() throws {
+            guard MessageIdentifierSet<UID>(string: uid) != nil else {
+                throw ValidationError("Invalid UID set '\(uid)'. Use comma-separated values or ranges (e.g. 1-3,5,10-20).")
+            }
+        }
+
+        func run() async throws {
+            try await withClient { client in
+                let serverId = try await resolveServerID(explicit: server, client: client)
+                guard let uidSet = MessageIdentifierSet<UID>(string: uid) else {
+                    throw ValidationError("Invalid UID set '\(uid)'.")
+                }
+
+                let outputDir = URL(fileURLWithPath: out, isDirectory: true)
+                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+
+                var foundCount = 0
+                for messageUID in uidSet.toArray() {
+                    let uidValue = Int(messageUID.value)
+                    let result = try await client.exportPDF(serverId: serverId, uid: uidValue, mailbox: mailbox)
+                    guard let data = Data(base64Encoded: result.data) else {
+                        fputs("Error: Failed to decode PDF for UID \(uidValue)\n", stderr)
+                        continue
+                    }
+
+                    let destination = outputDir.appendingPathComponent(result.filename)
+                    try data.write(to: destination)
+                    print("Saved \(result.filename) (\(formatBytes(result.size))) to \(destination.path)")
+                    foundCount += 1
+                }
+
+                if foundCount == 0 {
+                    fputs("Error: No PDFs exported\n", stderr)
+                    throw ExitCode.failure
+                }
             }
         }
     }
