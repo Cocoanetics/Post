@@ -1161,7 +1161,7 @@ public actor PostServer {
             }
         }
 
-        let email = Email(
+        var email = Email(
             sender: sender,
             recipients: recipients,
             ccRecipients: ccRecipients,
@@ -1171,6 +1171,9 @@ public actor PostServer {
             htmlBody: htmlBody,
             attachments: emailAttachments
         )
+        email.additionalHeaders = [
+            "X-Uniform-Type-Identifier": "com.apple.mail-draft"
+        ]
 
         return try await withServer(serverId: serverId) { server in
             _ = try await server.listSpecialUseMailboxes()
