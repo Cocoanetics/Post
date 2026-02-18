@@ -89,7 +89,6 @@ public actor PostServer {
         let date: String
         let subject: String
         let markdown: String?
-        let attachmentNames: [String]
         let attachments: [HookAttachmentPayload]
 
         private enum CodingKeys: String, CodingKey {
@@ -100,7 +99,6 @@ public actor PostServer {
             case date
             case subject
             case markdown
-            case attachmentNames
             case attachments
         }
 
@@ -113,7 +111,6 @@ public actor PostServer {
             try container.encode(date, forKey: .date)
             try container.encode(subject, forKey: .subject)
             try container.encodeIfPresent(markdown, forKey: .markdown)
-            try container.encode(attachmentNames, forKey: .attachmentNames)
             try container.encode(attachments, forKey: .attachments)
         }
     }
@@ -393,7 +390,6 @@ public actor PostServer {
                 date: header.date,
                 subject: header.subject,
                 markdown: nil,
-                attachmentNames: [],
                 attachments: []
             )
         }
@@ -410,7 +406,6 @@ public actor PostServer {
                     date: header.date,
                     subject: header.subject,
                     markdown: nil,
-                    attachmentNames: [],
                     attachments: []
                 )
             }
@@ -430,7 +425,6 @@ public actor PostServer {
                     size: nil
                 )
             }
-            let attachmentNames = attachments.map(\.filename)
 
             let formattedDate = formatLocalMediumDateTime(messageInfo.date)
             return HookMessagePayload(
@@ -441,7 +435,6 @@ public actor PostServer {
                 date: formattedDate.isEmpty ? header.date : formattedDate,
                 subject: messageInfo.subject ?? header.subject,
                 markdown: markdown,
-                attachmentNames: attachmentNames,
                 attachments: attachments
             )
         } catch {
@@ -456,7 +449,6 @@ public actor PostServer {
             date: header.date,
             subject: header.subject,
             markdown: nil,
-            attachmentNames: [],
             attachments: []
         )
     }

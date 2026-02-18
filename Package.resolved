@@ -78,8 +78,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-log.git",
       "state" : {
-        "revision" : "2778fd4e5a12a8aaa30a3ee8285f4ce54c5f3181",
-        "version" : "1.9.1"
+        "revision" : "bbd81b6725ae874c69e9b8c8804d462356b55523",
+        "version" : "1.10.1"
       }
     },
     {
@@ -160,7 +160,7 @@
       "location" : "https://github.com/Cocoanetics/SwiftText",
       "state" : {
         "branch" : "main",
-        "revision" : "bf075538bc745916ce012f63526f75cc8f595f8f"
+        "revision" : "4083660f1968da36e74b31d8c24dd1fee19efd2f"
       }
     },
     {
