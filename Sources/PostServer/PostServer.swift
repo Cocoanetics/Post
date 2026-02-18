@@ -16,6 +16,8 @@ public enum PostServerError: Error, LocalizedError, Sendable {
     case attachmentNotFound(filename: String, uid: Int)
     case attachmentDataMissing(filename: String)
     case noIdleEnabledServers
+    case fileNotFound(String)
+    case noGlobMatches(String)
     case noSession
 
     public var errorDescription: String? {
@@ -42,6 +44,10 @@ public enum PostServerError: Error, LocalizedError, Sendable {
             return "Could not decode attachment data for '\(filename)'."
         case .noIdleEnabledServers:
             return "No servers configured with `idle: true` in ~/.post.json."
+        case .fileNotFound(let path):
+            return "File not found: '\(path)'."
+        case .noGlobMatches(let pattern):
+            return "No files matched the pattern '\(pattern)'."
         case .noSession:
             return "No active MCP session."
         }
@@ -1031,6 +1037,96 @@ public actor PostServer {
         }
     }
 
+    /// Creates a new email draft and appends it to the Drafts mailbox.
+    /// - Parameter serverId: The server identifier
+    /// - Parameter from: Sender email address
+    /// - Parameter to: Comma-separated recipient email addresses
+    /// - Parameter subject: Email subject
+    /// - Parameter body: The body content
+    /// - Parameter format: Body format: "text" (default), "html", or "markdown"
+    /// - Parameter cc: Optional comma-separated CC addresses
+    /// - Parameter bcc: Optional comma-separated BCC addresses
+    /// - Parameter attachments: Optional comma-separated file paths to attach
+    /// - Parameter mailbox: Optional custom mailbox (defaults to server's Drafts folder)
+    @MCPTool
+    public func createDraft(
+        serverId: String,
+        from: String,
+        to: String,
+        subject: String,
+        body: String,
+        format: String = "text",
+        cc: String? = nil,
+        bcc: String? = nil,
+        attachments: String? = nil,
+        mailbox: String? = nil
+    ) async throws -> DraftResult {
+        let sender = EmailAddress(address: from)
+        let recipients = to.split(separator: ",").map { EmailAddress(address: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        let ccRecipients = cc?.split(separator: ",").map { EmailAddress(address: $0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? []
+        let bccRecipients = bcc?.split(separator: ",").map { EmailAddress(address: $0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? []
+
+        let textBody: String
+        let htmlBody: String?
+
+        switch format.lowercased() {
+        case "html":
+            htmlBody = body
+            textBody = body.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        case "markdown":
+            htmlBody = MarkdownToHTML.convert(body)
+            textBody = MarkdownToHTML.stripToPlainText(body)
+        default:
+            textBody = body
+            htmlBody = nil
+        }
+
+        var emailAttachments: [Attachment]?
+        if let attachments, !attachments.isEmpty {
+            let resolvedPaths = try attachments
+                .split(separator: ",")
+                .flatMap { segment -> [String] in
+                    let trimmed = segment.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let expanded = NSString(string: trimmed).expandingTildeInPath
+                    if expanded.contains("*") || expanded.contains("?") || expanded.contains("[") {
+                        let matches = Self.expandGlob(expanded)
+                        guard !matches.isEmpty else {
+                            throw PostServerError.noGlobMatches(expanded)
+                        }
+                        return matches
+                    }
+                    return [expanded]
+                }
+
+            emailAttachments = try resolvedPaths.map { path in
+                let url = URL(fileURLWithPath: path)
+                guard FileManager.default.fileExists(atPath: url.path) else {
+                    throw PostServerError.fileNotFound(url.path)
+                }
+                return try Attachment(fileURL: url)
+            }
+        }
+
+        let email = Email(
+            sender: sender,
+            recipients: recipients,
+            ccRecipients: ccRecipients,
+            bccRecipients: bccRecipients,
+            subject: subject,
+            textBody: textBody,
+            htmlBody: htmlBody,
+            attachments: emailAttachments
+        )
+
+        return try await withServer(serverId: serverId) { server in
+            _ = try await server.listSpecialUseMailboxes()
+            let result = try await server.createDraft(from: email, in: mailbox)
+            let targetMailbox = mailbox ?? "Drafts"
+            let uid = result.firstUID.map { Int($0.value) }
+            return DraftResult(mailbox: targetMailbox, uid: uid)
+        }
+    }
+
     /// Watches IMAP IDLE events in real time. Events are delivered as MCP log notifications.
     /// This is a long-running tool call — it blocks until the client disconnects.
     @MCPTool
@@ -1077,6 +1173,25 @@ public actor PostServer {
                 ] as [String: String])
             ))
         }
+    }
+
+    /// Expands a glob pattern (e.g. `~/docs/*.pdf`) into matching file paths.
+    private static func expandGlob(_ pattern: String) -> [String] {
+        var gt = glob_t()
+        defer { globfree(&gt) }
+
+        let flags = GLOB_TILDE | GLOB_BRACE
+        guard glob(pattern, flags, nil, &gt) == 0 else {
+            return []
+        }
+
+        var results: [String] = []
+        for i in 0..<Int(gt.gl_matchc) {
+            if let cStr = gt.gl_pathv[i] {
+                results.append(String(cString: cStr))
+            }
+        }
+        return results.sorted()
     }
 
     private func withServer<T>(serverId: String, operation: (IMAPServer) async throws -> T) async throws -> T {

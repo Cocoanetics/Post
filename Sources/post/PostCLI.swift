@@ -81,6 +81,7 @@ struct PostCLI: AsyncParsableCommand {
             Expunge.self,
             Quota.self,
             Attachment.self,
+            Draft.self,
             Idle.self,
             Credential.self
         ]
@@ -681,6 +682,93 @@ extension PostCLI {
                 let destination = outputDir.appendingPathComponent(attachment.filename)
                 try data.write(to: destination)
                 print("Saved \(attachment.filename) (\(attachment.contentType), \(formatBytes(attachment.size))) to \(destination.path)")
+            }
+        }
+    }
+
+    struct Draft: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Create a new email draft")
+
+        @Option(name: .long, help: "Sender email address")
+        var from: String
+
+        @Option(name: .long, help: "Comma-separated recipient addresses")
+        var to: String
+
+        @Option(name: .long, help: "Email subject")
+        var subject: String
+
+        @Option(name: .long, help: "Plain text body (mutually exclusive with --html and --markdown)")
+        var body: String?
+
+        @Option(name: .long, help: "HTML body (mutually exclusive with --body and --markdown)")
+        var html: String?
+
+        @Option(name: .long, help: "Markdown body (mutually exclusive with --body and --html)")
+        var markdown: String?
+
+        @Option(name: .long, help: "Comma-separated CC addresses")
+        var cc: String?
+
+        @Option(name: .long, help: "Comma-separated BCC addresses")
+        var bcc: String?
+
+        @Option(name: .long, parsing: .upToNextOption, help: "File paths or glob patterns to attach (repeatable)")
+        var attach: [String] = []
+
+        @Option(name: .long, help: "Server identifier")
+        var server: String?
+
+        @Option(name: .long, help: "Target mailbox (default: server's Drafts folder)")
+        var mailbox: String?
+
+        @OptionGroup
+        var globals: GlobalOptions
+
+        func validate() throws {
+            let count = [body, html, markdown].compactMap({ $0 }).count
+            if count == 0 {
+                throw ValidationError("One of --body, --html, or --markdown is required.")
+            }
+            if count > 1 {
+                throw ValidationError("Only one of --body, --html, or --markdown may be specified.")
+            }
+        }
+
+        func run() async throws {
+            let (content, format): (String, String)
+            if let body {
+                (content, format) = (body, "text")
+            } else if let html {
+                (content, format) = (html, "html")
+            } else {
+                (content, format) = (markdown!, "markdown")
+            }
+
+            try await withClient { client in
+                let serverId = try await resolveServerID(explicit: server, client: client)
+                let attachments = attach.isEmpty ? nil : attach.joined(separator: ",")
+                let result = try await client.createDraft(
+                    serverId: serverId,
+                    from: from,
+                    to: to,
+                    subject: subject,
+                    body: content,
+                    format: format,
+                    cc: cc,
+                    bcc: bcc,
+                    attachments: attachments,
+                    mailbox: mailbox
+                )
+                if globals.json {
+                    outputJSON(result)
+                    return
+                }
+                if let uid = result.uid {
+                    print("Draft created in '\(result.mailbox)' (UID \(uid)).")
+                } else {
+                    print("Draft created in '\(result.mailbox)'.")
+                }
             }
         }
     }

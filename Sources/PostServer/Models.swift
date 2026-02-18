@@ -138,5 +138,16 @@ public struct RawMessage: Codable, Sendable {
     }
 }
 
+@Schema
+public struct DraftResult: Codable, Sendable {
+    public let mailbox: String
+    public let uid: Int?
+
+    public init(mailbox: String, uid: Int?) {
+        self.mailbox = mailbox
+        self.uid = uid
+    }
+}
+
 // MailboxStatusInfo, QuotaInfo, QuotaResourceInfo removed — Post now returns
 // Mailbox.Status and Quota from SwiftMail directly (both Codable + Sendable).
