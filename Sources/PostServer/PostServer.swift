@@ -2,6 +2,7 @@ import Foundation
 import Logging
 import SwiftMCP
 import SwiftMail
+import SwiftTextHTML
 @preconcurrency import AnyCodable
 
 public enum PostServerError: Error, LocalizedError, Sendable {
