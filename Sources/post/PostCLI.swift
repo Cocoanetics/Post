@@ -937,7 +937,7 @@ extension PostCLI {
                     username: resolvedUsername,
                     password: resolvedPassword
                 )
-                print("Credential stored for server '\(server)' in \(KeychainCredentialStore.defaultPath.lastPathComponent).")
+                print("Credential stored for server '\(server)' in the login keychain.")
                 #else
                 print("Keychain is not available on this platform.")
                 throw ExitCode.failure
