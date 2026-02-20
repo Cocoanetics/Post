@@ -4,6 +4,7 @@ import Foundation
 import PostServer
 import SwiftMail
 import SwiftMCP
+import SwiftTextHTML
 @preconcurrency import AnyCodable
 
 /// Prints IDLE event log notifications from the daemon to stdout.
@@ -144,11 +145,18 @@ extension PostCLI {
     struct Fetch: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Fetch message(s) by UID")
 
+        enum BodyFormat: String, ExpressibleByArgument {
+            case text, html, markdown
+        }
+
         @Argument(help: "UID(s) of the message (comma-separated; ranges like 1-3 allowed)")
         var uid: String
 
         @ArgumentParser.Flag(help: "Download raw RFC 822 message as .eml file")
         var eml: Bool = false
+
+        @Option(name: .long, help: "Body format: text, html, or markdown (default: markdown)")
+        var body: BodyFormat = .markdown
 
         @Option(name: .long, help: "Output directory for .eml or text files")
         var out: String?
@@ -172,6 +180,39 @@ extension PostCLI {
             }
         }
 
+        private func formatBody(_ message: MessageDetail) async throws -> String {
+            switch body {
+            case .text:
+                return message.textBody ?? ""
+            case .html:
+                return message.htmlBody ?? message.textBody ?? ""
+            case .markdown:
+                return try await message.markdown()
+            }
+        }
+
+        struct FormattedMessage: Codable {
+            let uid: Int
+            let from: String
+            let to: [String]
+            let subject: String
+            let date: String
+            let body: String
+            let attachments: [AttachmentInfo]
+            let additionalHeaders: [String: String]?
+
+            init(detail: MessageDetail, formattedBody: String) {
+                self.uid = detail.uid
+                self.from = detail.from
+                self.to = detail.to
+                self.subject = detail.subject
+                self.date = detail.date
+                self.body = formattedBody
+                self.attachments = detail.attachments
+                self.additionalHeaders = detail.additionalHeaders
+            }
+        }
+
         func run() async throws {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
@@ -188,7 +229,7 @@ extension PostCLI {
                     outputDir = nil
                 }
 
-                var jsonMessages: [MessageDetail] = []
+                var jsonMessages: [FormattedMessage] = []
                 var foundCount = 0
                 for messageUID in uidSet.toArray() {
                     let uidValue = Int(messageUID.value)
@@ -216,19 +257,28 @@ extension PostCLI {
 
                     foundCount += messages.count
 
-                    if globals.json {
-                        jsonMessages.append(contentsOf: messages)
-                    } else if let outputDir {
-                        for message in messages {
+                    for message in messages {
+                        let formattedBody = try await formatBody(message)
+
+                        if globals.json {
+                            jsonMessages.append(FormattedMessage(detail: message, formattedBody: formattedBody))
+                        } else if let outputDir {
                             let filename = "\(message.uid).txt"
                             let destination = outputDir.appendingPathComponent(filename)
-                            let textBody = message.textBody ?? ""
-                            try textBody.write(to: destination, atomically: true, encoding: .utf8)
+                            try formattedBody.write(to: destination, atomically: true, encoding: .utf8)
                             print("Saved \(filename) to \(destination.path)")
-                        }
-                    } else {
-                        for message in messages {
-                            printMessageDetail(message)
+                        } else {
+                            print("UID: \(message.uid)")
+                            print("From: \(message.from)")
+                            print("To: \(message.to.joined(separator: ", "))")
+                            print("Subject: \(message.subject)")
+                            print("Date: \(message.date)")
+                            if !message.attachments.isEmpty {
+                                print("Attachments: \(message.attachments.map(\.filename).joined(separator: ", "))")
+                            }
+                            print()
+                            print(formattedBody)
+                            print()
                         }
                     }
                 }
