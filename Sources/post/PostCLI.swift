@@ -1166,11 +1166,16 @@ private func resolveServerID(explicit: String?, client: PostProxy) async throws 
     }
 
     let servers = try await client.listServers()
-    guard let first = servers.first else {
+    guard !servers.isEmpty else {
         throw PostCLIError.noServersConfigured
     }
 
-    return first.id
+    if servers.count == 1, let only = servers.first {
+        return only.id
+    }
+
+    let available = servers.map(\.id).sorted().joined(separator: ", ")
+    throw ValidationError("Multiple servers configured (\(servers.count)): --server is required. Available: \(available)")
 }
 
 private func printServersTable(_ servers: [ServerInfo]) {
