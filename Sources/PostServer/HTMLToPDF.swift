@@ -9,7 +9,7 @@ enum HTMLToPDF {
     /// Must be called from an async context; internally dispatches to `@MainActor`.
     @available(macOS 12.0, *)
     static func render(html: String) async throws -> Data {
-        try await MainActor.run {
+        await MainActor.run {
             // WebKit needs a RunLoop tick — ensure one is scheduled
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
         }
