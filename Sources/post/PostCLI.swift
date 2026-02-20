@@ -198,7 +198,7 @@ extension PostCLI {
             let subject: String
             let date: String
             let body: String
-            let attachments: [AttachmentInfo]
+            let attachments: [AttachmentInfo]?
             let additionalHeaders: [String: String]?
 
             init(detail: MessageDetail, formattedBody: String) {
@@ -208,13 +208,13 @@ extension PostCLI {
                 self.subject = detail.subject
                 self.date = detail.date
                 self.body = formattedBody
-                self.attachments = detail.attachments
+                self.attachments = detail.attachments.isEmpty ? nil : detail.attachments
                 self.additionalHeaders = detail.additionalHeaders
             }
         }
 
         func run() async throws {
-            try await withClient { client in
+            try await withClient(quiet: globals.json) { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 guard let uidSet = MessageIdentifierSet<UID>(string: uid) else {
                     throw ValidationError("Invalid UID set '\(uid)'. Use comma-separated values or ranges (e.g. 1-3,5,10-20).")
@@ -1185,10 +1185,39 @@ private func setProxyLogLevel(_ level: LogLevel, on proxy: MCPServerProxy) async
     }
 }
 
-private func withClient<T>(_ operation: (PostProxy) async throws -> T) async throws -> T {
+private func withClient<T>(quiet: Bool = false, _ operation: (PostProxy) async throws -> T) async throws -> T {
+    var stderrSaved: Int32 = -1
+    var devNull: Int32 = -1
+
+    if quiet {
+        // Save original stderr
+        stderrSaved = dup(STDERR_FILENO)
+        // Open /dev/null
+        devNull = open("/dev/null", O_WRONLY)
+        if devNull != -1 {
+            // Redirect stderr to /dev/null
+            dup2(devNull, STDERR_FILENO)
+        }
+    }
+
+    defer {
+        if quiet && stderrSaved != -1 {
+            // Restore original stderr
+            dup2(stderrSaved, STDERR_FILENO)
+            close(stderrSaved)
+            if devNull != -1 {
+                close(devNull)
+            }
+        }
+    }
+
     let tcpConfig = MCPServerTcpConfig(serviceName: PostProxy.serverName)
     let proxy = MCPServerProxy(config: .tcp(config: tcpConfig))
     try await proxy.connect()
+
+    if quiet {
+        try? await setProxyLogLevel(.error, on: proxy)
+    }
 
     defer {
         Task {
