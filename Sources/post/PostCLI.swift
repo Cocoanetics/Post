@@ -193,6 +193,7 @@ extension PostCLI {
 
         struct FormattedMessage: Codable {
             let uid: Int
+            let mailbox: String
             let from: String
             let to: [String]
             let subject: String
@@ -201,8 +202,9 @@ extension PostCLI {
             let attachments: [AttachmentInfo]?
             let additionalHeaders: [String: String]?
 
-            init(detail: MessageDetail, formattedBody: String) {
+            init(detail: MessageDetail, mailbox: String, formattedBody: String) {
                 self.uid = detail.uid
+                self.mailbox = mailbox
                 self.from = detail.from
                 self.to = detail.to
                 self.subject = detail.subject
@@ -261,7 +263,7 @@ extension PostCLI {
                         let formattedBody = try await formatBody(message)
 
                         if globals.json {
-                            jsonMessages.append(FormattedMessage(detail: message, formattedBody: formattedBody))
+                            jsonMessages.append(FormattedMessage(detail: message, mailbox: mailbox, formattedBody: formattedBody))
                         } else if let outputDir {
                             let filename = "\(message.uid).txt"
                             let destination = outputDir.appendingPathComponent(filename)
