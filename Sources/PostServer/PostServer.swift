@@ -786,7 +786,11 @@ public actor PostServer {
         subject: String? = nil,
         text: String? = nil,
         since: String? = nil,
-        before: String? = nil
+        before: String? = nil,
+        headerField: String? = nil,
+        headerValue: String? = nil,
+        unseen: Bool? = nil,
+        seen: Bool? = nil
     ) async throws -> [MessageHeader] {
         try await withServer(serverId: serverId) { server in
             _ = try await server.selectMailbox(mailbox)
@@ -811,6 +815,17 @@ public actor PostServer {
 
             if let before, !before.isEmpty {
                 criteria.append(.before(try parseISO8601Date(before, field: "before")))
+            }
+
+            if let headerField, !headerField.isEmpty, let headerValue, !headerValue.isEmpty {
+                criteria.append(.header(headerField, headerValue))
+            }
+
+            if unseen == true {
+                criteria.append(.unseen)
+            }
+            if seen == true {
+                criteria.append(.seen)
             }
 
             if criteria.isEmpty {
