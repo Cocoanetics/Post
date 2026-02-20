@@ -164,6 +164,7 @@ public final class KeychainCredentialStore: Sendable {
 
         var keychain: SecKeychain?
         let passphrase = try derivePassphrase()
+        let passData = passphrase.data(using: .utf8) ?? Data()
 
         // Try to open existing
         let openStatus = SecKeychainOpen(path, &keychain)
@@ -171,7 +172,9 @@ public final class KeychainCredentialStore: Sendable {
             var keychainStatus: SecKeychainStatus = 0
             let statusResult = SecKeychainGetStatus(keychain, &keychainStatus)
             if statusResult == errSecSuccess {
-                let unlockStatus = SecKeychainUnlock(keychain, UInt32(passphrase.count), passphrase, true)
+                let unlockStatus: OSStatus = passData.withUnsafeBytes { buffer in
+                    SecKeychainUnlock(keychain, UInt32(buffer.count), buffer.baseAddress, true)
+                }
                 if unlockStatus == errSecSuccess {
                     return keychain
                 }
@@ -179,7 +182,9 @@ public final class KeychainCredentialStore: Sendable {
         }
 
         // Create new keychain
-        let createStatus = SecKeychainCreate(path, UInt32(passphrase.count), passphrase, false, nil, &keychain)
+        let createStatus: OSStatus = passData.withUnsafeBytes { buffer in
+            SecKeychainCreate(path, UInt32(buffer.count), buffer.baseAddress, false, nil, &keychain)
+        }
         guard createStatus == errSecSuccess, let keychain else {
             throw KeychainError.operationFailed(createStatus, "create")
         }
