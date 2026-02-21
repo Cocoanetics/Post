@@ -96,6 +96,7 @@ public actor PostServer {
 
     private struct HookMessagePayload: Codable, Sendable {
         let uid: Int
+        let mailbox: String
         let from: String
         let to: [String]
         let replyTo: String?
@@ -106,6 +107,7 @@ public actor PostServer {
 
         private enum CodingKeys: String, CodingKey {
             case uid
+            case mailbox
             case from
             case to
             case replyTo
@@ -397,6 +399,7 @@ public actor PostServer {
         guard (1...Int(UInt32.max)).contains(header.uid) else {
             return HookMessagePayload(
                 uid: header.uid,
+                mailbox: mailbox,
                 from: header.from,
                 to: [],
                 replyTo: nil,
@@ -413,6 +416,7 @@ public actor PostServer {
             guard let messageInfo = try await server.fetchMessageInfo(for: identifier) else {
                 return HookMessagePayload(
                     uid: header.uid,
+                    mailbox: mailbox,
                     from: header.from,
                     to: [],
                     replyTo: nil,
@@ -442,6 +446,7 @@ public actor PostServer {
             let formattedDate = formatLocalMediumDateTime(messageInfo.date)
             return HookMessagePayload(
                 uid: header.uid,
+                mailbox: mailbox,
                 from: messageInfo.from ?? header.from,
                 to: messageInfo.to,
                 replyTo: replyTo,
@@ -456,6 +461,7 @@ public actor PostServer {
 
         return HookMessagePayload(
             uid: header.uid,
+            mailbox: mailbox,
             from: header.from,
             to: [],
             replyTo: nil,
