@@ -191,6 +191,24 @@ extension PostCLI {
             }
         }
 
+        private func resolveHeaders(
+            for message: MessageDetail,
+            client: PostProxy,
+            serverId: String
+        ) async -> [String: String] {
+            let decoded = decodeFetchHeaders(message.additionalHeaders)
+            if !decoded.isEmpty {
+                return decoded
+            }
+
+            guard let emlData = try? await client.downloadEml(serverId: serverId, uid: message.uid, mailbox: mailbox),
+                  !emlData.isEmpty else {
+                return decoded
+            }
+
+            return decodeFetchHeaders(parseAdditionalHeaders(from: emlData))
+        }
+
         struct FormattedMessage: Codable {
             let uid: Int
             let mailbox: String
@@ -199,10 +217,11 @@ extension PostCLI {
             let subject: String
             let date: String
             let body: String
+            let headers: [String: String]
             let attachments: [AttachmentInfo]?
             let additionalHeaders: [String: String]?
 
-            init(detail: MessageDetail, mailbox: String, formattedBody: String) {
+            init(detail: MessageDetail, mailbox: String, formattedBody: String, headers: [String: String]) {
                 self.uid = detail.uid
                 self.mailbox = mailbox
                 self.from = detail.from
@@ -210,6 +229,7 @@ extension PostCLI {
                 self.subject = detail.subject
                 self.date = detail.date
                 self.body = formattedBody
+                self.headers = headers
                 self.attachments = detail.attachments.isEmpty ? nil : detail.attachments
                 self.additionalHeaders = detail.additionalHeaders
             }
@@ -263,7 +283,13 @@ extension PostCLI {
                         let formattedBody = try await formatBody(message)
 
                         if globals.json {
-                            jsonMessages.append(FormattedMessage(detail: message, mailbox: mailbox, formattedBody: formattedBody))
+                            let headers = await resolveHeaders(for: message, client: client, serverId: serverId)
+                            jsonMessages.append(FormattedMessage(
+                                detail: message,
+                                mailbox: mailbox,
+                                formattedBody: formattedBody,
+                                headers: headers
+                            ))
                         } else if let outputDir {
                             let filename = "\(message.uid).txt"
                             let destination = outputDir.appendingPathComponent(filename)
@@ -1363,6 +1389,94 @@ private func printQuotaInfo(_ quota: Quota) {
             print("\(resource.resourceName): \(resource.usage) / \(resource.limit)")
         }
     }
+}
+
+private func decodeFetchHeaders(_ additionalHeaders: [String: String]?) -> [String: String] {
+    guard let additionalHeaders else { return [:] }
+
+    var decoded: [String: String] = [:]
+    decoded.reserveCapacity(additionalHeaders.count)
+
+    for (rawKey, rawValue) in additionalHeaders {
+        let key = normalizeFetchHeaderKey(rawKey)
+        let value = decodeFetchHeaderValue(rawValue)
+        guard !key.isEmpty, !value.isEmpty else { continue }
+        decoded[key] = value
+    }
+
+    return decoded
+}
+
+private func parseAdditionalHeaders(from emlData: Data) -> [String: String] {
+    guard let content = String(data: emlData, encoding: .utf8)
+            ?? String(data: emlData, encoding: .isoLatin1) else {
+        return [:]
+    }
+
+    let headerBlock: Substring
+    if let split = content.range(of: "\r\n\r\n") {
+        headerBlock = content[..<split.lowerBound]
+    } else if let split = content.range(of: "\n\n") {
+        headerBlock = content[..<split.lowerBound]
+    } else {
+        headerBlock = content[content.startIndex..<content.endIndex]
+    }
+
+    var parsed: [String: String] = [:]
+    var currentKey: String?
+    var currentValue = ""
+
+    for line in headerBlock.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init) {
+        if line.isEmpty {
+            continue
+        }
+
+        if let first = line.first, first == " " || first == "\t" {
+            currentValue += "\r\n" + line
+            continue
+        }
+
+        if let currentKey {
+            parsed[currentKey] = currentValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        guard let colonIndex = line.firstIndex(of: ":") else {
+            currentKey = nil
+            currentValue = ""
+            continue
+        }
+
+        currentKey = normalizeFetchHeaderKey(String(line[..<colonIndex]))
+        currentValue = String(line[line.index(after: colonIndex)...])
+    }
+
+    if let currentKey {
+        parsed[currentKey] = currentValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    let standardKeys: Set<String> = [
+        "from", "to", "cc", "bcc", "subject", "date", "message-id",
+        "content-type", "content-transfer-encoding", "mime-version"
+    ]
+    return parsed.filter { !standardKeys.contains($0.key) }
+}
+
+private func normalizeFetchHeaderKey(_ key: String) -> String {
+    key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+}
+
+private func decodeFetchHeaderValue(_ value: String) -> String {
+    let unfolded = unfoldFetchHeaderValue(value)
+    let decoded = unfolded.decodeMIMEHeader()
+    return decoded.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func unfoldFetchHeaderValue(_ value: String) -> String {
+    guard let regex = try? NSRegularExpression(pattern: "\\r?\\n[\\t ]+") else {
+        return value
+    }
+    let range = NSRange(value.startIndex..<value.endIndex, in: value)
+    return regex.stringByReplacingMatches(in: value, range: range, withTemplate: " ")
 }
 
 private func pad(_ value: String, to width: Int) -> String {

@@ -801,7 +801,9 @@ public actor PostServer {
             var messages: [MessageDetail] = []
 
             for try await message in server.fetchMessages(using: set) {
-                messages.append(messageDetail(from: message))
+                let additionalHeaders = await fetchAdditionalHeaders(for: message, using: server)
+
+                messages.append(messageDetail(from: message, additionalHeaders: additionalHeaders))
             }
 
             return messages.sorted { $0.uid < $1.uid }
@@ -1399,6 +1401,35 @@ public actor PostServer {
         return message.contains("connection") || message.contains("broken pipe") || message.contains("not connected")
     }
 
+    private func fetchAdditionalHeaders(for message: Message, using server: IMAPServer) async -> [String: String]? {
+        if let additional = message.header.additionalFields, !additional.isEmpty {
+            return additional
+        }
+
+        if let uid = message.uid,
+           let info = try? await server.fetchMessageInfo(for: uid),
+           let fields = info.additionalFields,
+           !fields.isEmpty {
+            return fields
+        }
+
+        let rawData: Data?
+        if let uid = message.uid {
+            rawData = try? await server.fetchRawMessage(identifier: uid)
+        } else {
+            rawData = try? await server.fetchRawMessage(identifier: message.sequenceNumber)
+        }
+
+        if let rawData,
+           let parsed = try? Message(emlData: rawData),
+           let fields = parsed.header.additionalFields,
+           !fields.isEmpty {
+            return fields
+        }
+
+        return message.header.additionalFields
+    }
+
     private func collectHeaders(from stream: AsyncThrowingStream<Message, Error>) async throws -> [MessageHeader] {
         var headers: [MessageHeader] = []
 
@@ -1418,7 +1449,7 @@ public actor PostServer {
         )
     }
 
-    private func messageDetail(from message: Message) -> MessageDetail {
+    private func messageDetail(from message: Message, additionalHeaders: [String: String]? = nil) -> MessageDetail {
         let attachments = message.attachments.map {
             AttachmentInfo(
                 filename: $0.filename ?? $0.suggestedFilename,
@@ -1435,7 +1466,7 @@ public actor PostServer {
             textBody: message.textBody,
             htmlBody: message.htmlBody,
             attachments: attachments,
-            additionalHeaders: message.header.additionalFields
+            additionalHeaders: additionalHeaders ?? message.header.additionalFields
         )
     }
 
