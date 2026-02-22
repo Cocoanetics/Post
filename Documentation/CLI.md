@@ -146,14 +146,17 @@ post expunge --mailbox Trash      # Expunge Trash
 
 ### Flags
 
-#### `post flag` — Add or remove flags
+#### `post flag` — Add/remove flags or set Mail.app flag color
 
 Standard IMAP flags: `seen`, `answered`, `flagged`, `deleted`, `draft`.
+Exactly one of `--add`, `--remove`, `--color`, or `--unflag` is required.
 
 ```bash
 post flag 12199 --add flagged              # Star/flag a message
 post flag 12199 --remove seen              # Mark as unread
 post flag 12198,12199 --add seen,flagged   # Multiple flags
+post flag 12275 --color green              # Set Mail.app flag color
+post flag 12275 --unflag                   # Remove \\Flagged and color bits
 ```
 
 ### Watching
