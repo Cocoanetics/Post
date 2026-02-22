@@ -63,7 +63,7 @@ public enum PostServerError: Error, LocalizedError, Sendable {
 
 @MCPServer(name: "Post", generateClient: true)
 public actor PostServer {
-    private struct HookAttachmentPayload: Codable, Sendable {
+    private struct HookAttachmentPayload: Encodable, Sendable {
         let filename: String
         let contentType: String
         let disposition: String?
@@ -94,27 +94,26 @@ public actor PostServer {
         }
     }
 
-    private struct HookMessagePayload: Codable, Sendable {
+    private struct HookMessagePayload: Encodable, Sendable {
         let uid: Int
         let mailbox: String
         let from: String
         let to: [String]
         let replyTo: String?
-        let date: String
+        let date: Date
         let subject: String
         let markdown: String?
         let attachments: [HookAttachmentPayload]
+        let headers: [String: String]
 
         private enum CodingKeys: String, CodingKey {
             case uid
-            case mailbox
             case from
             case to
-            case replyTo
             case date
             case subject
             case markdown
-            case attachments
+            case headers
         }
 
         func encode(to encoder: Encoder) throws {
@@ -122,15 +121,14 @@ public actor PostServer {
             try container.encode(uid, forKey: .uid)
             try container.encode(from, forKey: .from)
             try container.encode(to, forKey: .to)
-            try container.encodeIfPresent(replyTo, forKey: .replyTo)
             try container.encode(date, forKey: .date)
             try container.encode(subject, forKey: .subject)
-            try container.encodeIfPresent(markdown, forKey: .markdown)
-            try container.encode(attachments, forKey: .attachments)
+            try container.encode(markdown ?? "", forKey: .markdown)
+            try container.encode(headers, forKey: .headers)
         }
     }
 
-    private struct HookPayload: Codable, Sendable {
+    private struct HookPayload: Encodable, Sendable {
         let server: String
         let mailbox: String
         let message: HookMessagePayload
@@ -374,20 +372,45 @@ public actor PostServer {
                 uid: uidInt,
                 from: info.from ?? "Unknown",
                 subject: info.subject ?? "(No Subject)",
-                date: formatLocalMediumDateTime(info.date)
+                date: formatHookDate(info.date)
             )
         }
     }
 
-    /// Formats dates for hook payloads in the current user's locale and time zone.
-    private static func formatLocalMediumDateTime(_ date: Date?) -> String {
+    /// Formats dates for hook payloads in ISO 8601 format.
+    private static func formatHookDate(_ date: Date?) -> String {
         guard let date else { return "" }
-        let formatter = DateFormatter()
-        formatter.locale = .autoupdatingCurrent
-        formatter.timeZone = .autoupdatingCurrent
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .medium
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
         return formatter.string(from: date)
+    }
+
+    /// Resolves hook payload date with best-effort fallback from message date, header date, then Unix epoch.
+    private static func resolveHookDate(messageDate: Date?, headerDate: String) -> Date {
+        if let messageDate {
+            return messageDate
+        }
+
+        if let parsedHeaderDate = parseISO8601HookDate(headerDate) {
+            return parsedHeaderDate
+        }
+
+        return Date(timeIntervalSince1970: 0)
+    }
+
+    private static func parseISO8601HookDate(_ value: String) -> Date? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let withFractional = ISO8601DateFormatter()
+        withFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withFractional.date(from: trimmed) {
+            return date
+        }
+
+        let withoutFractional = ISO8601DateFormatter()
+        withoutFractional.formatOptions = [.withInternetDateTime]
+        return withoutFractional.date(from: trimmed)
     }
 
     /// Fetches all hook-relevant message fields (headers, markdown body, attachment names).
@@ -400,13 +423,14 @@ public actor PostServer {
             return HookMessagePayload(
                 uid: header.uid,
                 mailbox: mailbox,
-                from: header.from,
+                from: decodeHeaderValue(header.from),
                 to: [],
                 replyTo: nil,
-                date: header.date,
-                subject: header.subject,
+                date: resolveHookDate(messageDate: nil, headerDate: header.date),
+                subject: decodeHeaderValue(header.subject),
                 markdown: nil,
-                attachments: []
+                attachments: [],
+                headers: [:]
             )
         }
 
@@ -417,18 +441,23 @@ public actor PostServer {
                 return HookMessagePayload(
                     uid: header.uid,
                     mailbox: mailbox,
-                    from: header.from,
+                    from: decodeHeaderValue(header.from),
                     to: [],
                     replyTo: nil,
-                    date: header.date,
-                    subject: header.subject,
+                    date: resolveHookDate(messageDate: nil, headerDate: header.date),
+                    subject: decodeHeaderValue(header.subject),
                     markdown: nil,
-                    attachments: []
+                    attachments: [],
+                    headers: [:]
                 )
             }
 
             let markdown = await fetchHookMarkdown(using: server, messageInfo: messageInfo)
-            let replyTo = extractReplyTo(from: messageInfo.additionalFields)
+            let decodedAdditionalHeaders = decodeAdditionalHeaders(messageInfo.additionalFields)
+            let replyTo = extractReplyTo(from: decodedAdditionalHeaders)
+            let decodedFrom = decodeHeaderValue(messageInfo.from ?? header.from)
+            let decodedTo = decodeRecipientList(messageInfo.to)
+            let decodedSubject = decodeHeaderValue(messageInfo.subject ?? header.subject)
             let attachmentParts = messageInfo.parts.filter(isAttachmentPart)
             let attachments: [HookAttachmentPayload] = attachmentParts.map { part in
                 let filename = canonicalAttachmentFilename(part)
@@ -443,17 +472,26 @@ public actor PostServer {
                 )
             }
 
-            let formattedDate = formatLocalMediumDateTime(messageInfo.date)
+            let resolvedDate = resolveHookDate(messageDate: messageInfo.date, headerDate: header.date)
+            let headers = buildHookHeaders(
+                additionalHeaders: decodedAdditionalHeaders,
+                from: decodedFrom,
+                to: decodedTo,
+                replyTo: replyTo,
+                subject: decodedSubject,
+                date: formatHookDate(resolvedDate)
+            )
             return HookMessagePayload(
                 uid: header.uid,
                 mailbox: mailbox,
-                from: messageInfo.from ?? header.from,
-                to: messageInfo.to,
+                from: decodedFrom,
+                to: decodedTo,
                 replyTo: replyTo,
-                date: formattedDate.isEmpty ? header.date : formattedDate,
-                subject: messageInfo.subject ?? header.subject,
+                date: resolvedDate,
+                subject: decodedSubject,
                 markdown: markdown,
-                attachments: attachments
+                attachments: attachments,
+                headers: headers
             )
         } catch {
             Self.stderr("Failed to fetch hook message details for \(mailbox) uid=\(header.uid): \(String(describing: error))")
@@ -462,13 +500,14 @@ public actor PostServer {
         return HookMessagePayload(
             uid: header.uid,
             mailbox: mailbox,
-            from: header.from,
+            from: decodeHeaderValue(header.from),
             to: [],
             replyTo: nil,
-            date: header.date,
-            subject: header.subject,
+            date: resolveHookDate(messageDate: nil, headerDate: header.date),
+            subject: decodeHeaderValue(header.subject),
             markdown: nil,
-            attachments: []
+            attachments: [],
+            headers: [:]
         )
     }
 
@@ -525,7 +564,7 @@ public actor PostServer {
             from: messageInfo.from ?? "Unknown",
             to: messageInfo.to,
             subject: messageInfo.subject ?? "(No Subject)",
-            date: formatLocalMediumDateTime(messageInfo.date),
+            date: formatHookDate(messageInfo.date),
             textBody: textBody,
             htmlBody: htmlBody,
             attachments: [],
@@ -540,18 +579,72 @@ public actor PostServer {
         }
     }
 
-    /// Extracts Reply-To header value (case-insensitive) from additional fields.
-    private static func extractReplyTo(from additionalFields: [String: String]?) -> String? {
-        guard let additionalFields else { return nil }
+    /// Extracts Reply-To header value from normalized (lowercase) decoded header fields.
+    private static func extractReplyTo(from additionalFields: [String: String]) -> String? {
+        guard let value = additionalFields["reply-to"] else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 
-        if let replyTo = additionalFields.first(where: { key, _ in
-            key.caseInsensitiveCompare("Reply-To") == .orderedSame
-        })?.value {
-            let trimmed = replyTo.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
+    /// Decodes and normalizes additional headers from IMAP into a lowercase-keyed dictionary.
+    private static func decodeAdditionalHeaders(_ additionalFields: [String: String]?) -> [String: String] {
+        guard let additionalFields else { return [:] }
+
+        var decoded: [String: String] = [:]
+        decoded.reserveCapacity(additionalFields.count)
+
+        for (rawKey, rawValue) in additionalFields {
+            let key = normalizeHeaderKey(rawKey)
+            let value = decodeHeaderValue(rawValue)
+            guard !key.isEmpty, !value.isEmpty else { continue }
+            decoded[key] = value
         }
 
-        return nil
+        return decoded
+    }
+
+    /// Builds the hook JSON headers map with decoded RFC2047 values.
+    private static func buildHookHeaders(
+        additionalHeaders: [String: String],
+        from: String,
+        to: [String],
+        replyTo: String?,
+        subject: String,
+        date: String
+    ) -> [String: String] {
+        var headers = additionalHeaders
+        if !from.isEmpty { headers["from"] = from }
+        if !to.isEmpty { headers["to"] = to.joined(separator: ", ") }
+        if let replyTo, !replyTo.isEmpty { headers["reply-to"] = replyTo }
+        if !subject.isEmpty { headers["subject"] = subject }
+        if !date.isEmpty { headers["date"] = date }
+        return headers
+    }
+
+    private static func decodeRecipientList(_ recipients: [String]) -> [String] {
+        recipients
+            .map(decodeHeaderValue)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func normalizeHeaderKey(_ key: String) -> String {
+        key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func decodeHeaderValue(_ value: String) -> String {
+        let unfolded = unfoldHeaderValue(value)
+        let decoded = unfolded.decodeMIMEHeader()
+        return decoded.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Unfolds multiline header continuations into a single line before decoding.
+    private static func unfoldHeaderValue(_ value: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: "\\r?\\n[\\t ]+") else {
+            return value
+        }
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        return regex.stringByReplacingMatches(in: value, range: range, withTemplate: " ")
     }
 
     /// Fetches messages with UID >= minUID
@@ -595,7 +688,7 @@ public actor PostServer {
             env["POST_REPLY_TO"] = replyTo
         }
         env["POST_SUBJECT"] = message.subject
-        env["POST_DATE"] = message.date
+        env["POST_DATE"] = formatHookDate(message.date)
         env["POST_SERVER"] = serverId
         env["POST_MAILBOX"] = mailbox
         process.environment = env
@@ -617,6 +710,7 @@ public actor PostServer {
             let payload = HookPayload(server: serverId, mailbox: mailbox, message: message)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
             let json = try encoder.encode(payload)
             try stdinPipe.fileHandleForWriting.write(contentsOf: json)
             try stdinPipe.fileHandleForWriting.write(contentsOf: Data([0x0A]))
