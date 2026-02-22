@@ -53,6 +53,12 @@ let package = Package(
                 .product(name: "SwiftMCP", package: "SwiftMCP"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
             ]
+        ),
+        .testTarget(
+            name: "PostCLITests",
+            dependencies: [
+                "post"
+            ]
         )
     ]
 )
