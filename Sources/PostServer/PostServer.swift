@@ -372,7 +372,8 @@ public actor PostServer {
                 uid: uidInt,
                 from: info.from ?? "Unknown",
                 subject: info.subject ?? "(No Subject)",
-                date: formatHookDate(info.date)
+                date: formatHookDate(info.date),
+                flag: info.flagColor?.rawValue
             )
         }
     }
@@ -662,7 +663,8 @@ public actor PostServer {
                     uid: uidInt,
                     from: info.from ?? "Unknown",
                     subject: info.subject ?? "(No Subject)",
-                    date: formatDate(info.date)
+                    date: formatDate(info.date),
+                    flag: info.flagColor?.rawValue
                 )
             }
             return headers.sorted { $0.uid < $1.uid }
@@ -880,6 +882,8 @@ public actor PostServer {
     /// - Parameter text: Full-text search
     /// - Parameter since: Messages since date (ISO 8601)
     /// - Parameter before: Messages before date (ISO 8601)
+    /// - Parameter flagged: Only flagged messages when true
+    /// - Parameter unflagged: Only unflagged messages when true
     @MCPTool
     public func searchMessages(
         serverId: String,
@@ -892,7 +896,9 @@ public actor PostServer {
         headerField: String? = nil,
         headerValue: String? = nil,
         unseen: Bool? = nil,
-        seen: Bool? = nil
+        seen: Bool? = nil,
+        flagged: Bool? = nil,
+        unflagged: Bool? = nil
     ) async throws -> [MessageHeader] {
         try await withServer(serverId: serverId) { server in
             _ = try await server.selectMailbox(mailbox)
@@ -928,6 +934,12 @@ public actor PostServer {
             }
             if seen == true {
                 criteria.append(.seen)
+            }
+            if flagged == true {
+                criteria.append(.flagged)
+            }
+            if unflagged == true {
+                criteria.append(.unflagged)
             }
 
             if criteria.isEmpty {
@@ -1445,7 +1457,8 @@ public actor PostServer {
             uid: messageUID(from: message),
             from: message.from ?? "Unknown",
             subject: message.subject ?? "(No Subject)",
-            date: formatDate(message.date)
+            date: formatDate(message.date),
+            flag: message.header.flagColor?.rawValue
         )
     }
 

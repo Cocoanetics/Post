@@ -134,7 +134,7 @@ extension PostCLI {
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 let messages = try await client.listMessages(serverId: serverId, mailbox: mailbox, limit: limit)
                 if globals.json {
-                    outputJSON(messages)
+                    outputJSON(messages.map(JSONMessageHeader.init))
                     return
                 }
                 printMessageHeaders(messages)
@@ -444,12 +444,21 @@ extension PostCLI {
         @ArgumentParser.Flag(name: .long, help: "Only seen (read) messages")
         var seen: Bool = false
 
+        @ArgumentParser.Flag(name: .long, help: "Only flagged messages")
+        var flagged: Bool = false
+
+        @ArgumentParser.Flag(name: .long, help: "Only unflagged messages")
+        var unflagged: Bool = false
+
         @OptionGroup
         var globals: GlobalOptions
 
         func validate() throws {
             if unseen && seen {
                 throw ValidationError("Only one of --unseen or --seen may be set.")
+            }
+            if flagged && unflagged {
+                throw ValidationError("Only one of --flagged or --unflagged may be set.")
             }
             if header != nil && messageId != nil {
                 throw ValidationError("Only one of --header or --message-id may be set.")
@@ -487,10 +496,12 @@ extension PostCLI {
                     headerField: headerField,
                     headerValue: headerValue,
                     unseen: unseen ? true : nil,
-                    seen: seen ? true : nil
+                    seen: seen ? true : nil,
+                    flagged: flagged ? true : nil,
+                    unflagged: unflagged ? true : nil
                 )
                 if globals.json {
-                    outputJSON(messages)
+                    outputJSON(messages.map(JSONMessageHeader.init))
                     return
                 }
                 printMessageHeaders(messages)
@@ -1191,6 +1202,29 @@ private enum PostCLIError: Error, LocalizedError {
 
 private struct ResultMessage: Codable {
     let result: String
+}
+
+private struct JSONMessageHeader: Codable {
+    let uid: Int
+    let from: String
+    let subject: String
+    let date: String
+    let flag: String?
+
+    init(_ message: MessageHeader) {
+        uid = message.uid
+        from = message.from
+        subject = message.subject
+        date = message.date
+        flag = message.flagColor?.rawValue
+    }
+}
+
+private extension MessageHeader {
+    var flagColor: MailFlagColor? {
+        guard let flag else { return nil }
+        return MailFlagColor(rawValue: flag)
+    }
 }
 
 private func setProxyLogLevel(_ level: LogLevel, on proxy: MCPServerProxy) async throws {
