@@ -434,7 +434,7 @@ public actor PostServer {
         let infos = try await server.fetchMessageInfos(uidRange: UID(safeMinUID)...)
         return infos.compactMap { info -> MessageHeader? in
             let uidInt = Int(info.uid?.value ?? 0)
-            guard uidInt >= safeMinUID else { return nil }
+            guard uidInt > 0, uidInt >= minUID else { return nil }
             return MessageHeader(
                 uid: uidInt,
                 from: info.from ?? "Unknown",
