@@ -7,6 +7,9 @@ import SwiftMCP
 import SwiftTextHTML
 @preconcurrency import AnyCodable
 
+// INTENTIONAL SYNTAX ERROR FOR PRE-PUSH CHECK TEST
+let intentionalError = "missing quote
+
 /// Prints IDLE event log notifications from the daemon to stdout.
 private final class IdleEventLogger: MCPServerProxyLogNotificationHandling, @unchecked Sendable {
     private let dateFormatter: DateFormatter = {
