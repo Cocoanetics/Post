@@ -1,5 +1,5 @@
 {
-  "originHash" : "c78b60ada9467f323e6c5b6c8fab2b2ef8340a73a36e1b25bce25d0094f0874b",
+  "originHash" : "a25bd335c609c979bb184d03a4bde675e5d336674c3c8ee03ac9fb835f368cb8",
   "pins" : [
     {
       "identity" : "anycodable",
@@ -87,8 +87,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio",
       "state" : {
-        "revision" : "9b92dcd5c22ae17016ad867852e0850f1f9f93ed",
-        "version" : "2.94.1"
+        "revision" : "e932d3c4d8f77433c8f7093b5ebcbf91463948a0",
+        "version" : "2.95.0"
       }
     },
     {
@@ -142,7 +142,7 @@
       "location" : "https://github.com/Cocoanetics/SwiftMail",
       "state" : {
         "branch" : "main",
-        "revision" : "f0e81f165fec24ac4a0b03d6dce7388fe92bca2b"
+        "revision" : "b61d78e932bcd3f107473f79f172cc819455a8a1"
       }
     },
     {
@@ -151,7 +151,7 @@
       "location" : "https://github.com/Cocoanetics/SwiftMCP",
       "state" : {
         "branch" : "main",
-        "revision" : "c125c802a38b9db9b69afc1df8879338817ff136"
+        "revision" : "5f3b0203d96af59567ba9fc83482aa2505786f42"
       }
     },
     {
@@ -160,7 +160,7 @@
       "location" : "https://github.com/Cocoanetics/SwiftText",
       "state" : {
         "branch" : "main",
-        "revision" : "e0a2f6c467b25acbd63a836677ae66e246d7c9f0"
+        "revision" : "f648949beca402cb080f94a77c262434e39d6e63"
       }
     },
     {
