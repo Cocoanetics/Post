@@ -319,6 +319,7 @@ public actor PostServer {
                     Self.stderr("IDLE catch-up for \(serverId)/\(mailbox): fetched \(caughtUp.count) messages since uid \(lastSeenUID + 1)")
                     Self.idleLog("IDLE catch-up for \(serverId)/\(mailbox): fetched \(caughtUp.count) messages since uid \(lastSeenUID + 1)")
                     for msg in caughtUp {
+                        Self.idleLog("IDLE catch-up examining message uid=\(msg.uid) vs lastSeenUID=\(lastSeenUID)")
                         if msg.uid > lastSeenUID {
                             lastSeenUID = msg.uid
                             Self.stderr("New message (catch-up) \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
@@ -328,6 +329,8 @@ public actor PostServer {
                                 let hookMessage = await Self.fetchHookMessagePayload(using: server, mailbox: mailbox, header: msg)
                                 Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: hookMessage)
                             }
+                        } else {
+                            Self.idleLog("IDLE catch-up SKIPPED message uid=\(msg.uid) because lastSeenUID=\(lastSeenUID)")
                         }
                     }
                 } catch {
