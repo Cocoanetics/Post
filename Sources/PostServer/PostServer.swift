@@ -750,7 +750,11 @@ public actor PostServer {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         let stdinPipe = Pipe()
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
         process.standardInput = stdinPipe
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
 
         var env = ProcessInfo.processInfo.environment
         env["POST_UID"] = String(message.uid)
@@ -773,6 +777,33 @@ public actor PostServer {
         process.terminationHandler = { [serverId, mailbox, uid = message.uid] proc in
             let status = proc.terminationStatus
             let reason = proc.terminationReason
+
+            let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+
+            if let stdoutText = String(data: stdoutData, encoding: .utf8) {
+                let trimmed = stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    for line in trimmed.split(separator: "\n", omittingEmptySubsequences: true) {
+                        let logLine = "Hook stdout for \(serverId)/\(mailbox) uid=\(uid): \(line)"
+                        Self.idleLog(logLine)
+                    }
+                }
+            }
+
+            if let stderrText = String(data: stderrData, encoding: .utf8) {
+                let trimmed = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    for line in trimmed.split(separator: "\n", omittingEmptySubsequences: true) {
+                        let logLine = "Hook stderr for \(serverId)/\(mailbox) uid=\(uid): \(line)"
+                        Self.idleLog(logLine)
+                        if let data = ("[postd] \(logLine)\n").data(using: .utf8) {
+                            try? FileHandle.standardError.write(contentsOf: data)
+                        }
+                    }
+                }
+            }
+
             if let data = ("[postd] Hook finished for \(serverId)/\(mailbox) uid=\(uid): status=\(status) reason=\(reason)\n").data(using: .utf8) {
                 try? FileHandle.standardError.write(contentsOf: data)
             }
@@ -1330,8 +1361,8 @@ public actor PostServer {
             htmlBody = body
             textBody = body.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
         case "markdown":
-            htmlBody = MarkdownToHTML.convert(body)
-            textBody = MarkdownToHTML.stripToPlainText(body)
+            htmlBody = Self.wrapMarkdownHTML(MarkdownToHTML.convert(body))
+            textBody = body  // Keep raw markdown for plain text part
         default:
             textBody = body
             htmlBody = nil
@@ -1429,6 +1460,75 @@ public actor PostServer {
                 ] as [String: String])
             ))
         }
+    }
+
+    /// Wraps Markdown-converted HTML with styling for proper email rendering.
+    private static func wrapMarkdownHTML(_ html: String) -> String {
+        """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #333;
+        }
+        blockquote {
+            border-left: 4px solid #ccc;
+            margin: 0.5em 0;
+            padding: 0.25em 0 0.25em 1em;
+            color: #666;
+        }
+        code {
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            padding: 0.1em 0.3em;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.9em;
+        }
+        pre {
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 0.8em;
+            overflow: auto;
+        }
+        pre code {
+            background: none;
+            border: none;
+            padding: 0;
+        }
+        h1, h2, h3, h4, h5, h6 {
+            margin-top: 1em;
+            margin-bottom: 0.5em;
+            font-weight: 600;
+        }
+        h1 { font-size: 1.8em; }
+        h2 { font-size: 1.5em; }
+        h3 { font-size: 1.3em; }
+        hr {
+            border: none;
+            border-top: 1px solid #ddd;
+            margin: 1em 0;
+        }
+        a {
+            color: #0366d6;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        </style>
+        </head>
+        <body>
+        \(html)
+        </body>
+        </html>
+        """
     }
 
     /// Sanitizes a string for use as a filename.
