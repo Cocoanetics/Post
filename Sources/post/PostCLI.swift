@@ -1082,8 +1082,8 @@ extension PostCLI {
         @Argument(help: "UID of the message to reply to")
         var uid: Int
 
-        @Option(name: .long, help: "Reply text body (will be placed before quoted original)")
-        var body: String = ""
+        @Option(name: .long, help: "Reply text body (will be placed before quoted original; omit to create empty draft for inline editing)")
+        var body: String?
 
         @ArgumentParser.Flag(name: .long, help: "Reply-all to all recipients")
         var all: Bool = false
@@ -1121,7 +1121,14 @@ extension PostCLI {
                 // Format the reply
                 let replySubject = original.subject.hasPrefix("Re: ") ? original.subject : "Re: \(original.subject)"
                 let quotedBody = try await formatQuotedReply(original: original)
-                let fullBody = body.isEmpty ? quotedBody : "\(body)\n\(quotedBody)"
+                
+                // If body is provided, place it before the quote; otherwise just the quote (for inline editing)
+                let fullBody: String
+                if let replyText = body, !replyText.isEmpty {
+                    fullBody = "\(replyText)\n\(quotedBody)"
+                } else {
+                    fullBody = quotedBody
+                }
                 
                 // Determine recipients
                 let toAddress = original.from
