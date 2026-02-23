@@ -432,15 +432,15 @@ public actor PostServer {
         _ = try await server.selectMailbox(mailbox)
         let safeMinUID = max(1, minUID)
         let infos = try await server.fetchMessageInfos(uidRange: UID(safeMinUID)...)
-        return infos.compactMap { info in
+        return infos.compactMap { info -> MessageHeader? in
             let uidInt = Int(info.uid?.value ?? 0)
-            guard uidInt > 0 else { return nil }
+            guard uidInt >= safeMinUID else { return nil }
             return MessageHeader(
                 uid: uidInt,
                 from: info.from ?? "Unknown",
                 subject: info.subject ?? "(No Subject)",
                 date: formatHookDate(info.date),
-                flag: info.flagColor?.rawValue
+                flag: MailFlagColor(flags: info.flags)?.rawValue
             )
         }
     }
@@ -726,7 +726,7 @@ public actor PostServer {
             let safeMinUID = max(1, minUID)
             // Fetch UID range as a single `UID FETCH <min>:*` (no expansion)
             let infos = try await server.fetchMessageInfos(uidRange: UID(safeMinUID)...)
-            let headers: [MessageHeader] = infos.compactMap { info in
+            let headers: [MessageHeader] = infos.compactMap { info -> MessageHeader? in
                 let uidInt = Int(info.uid?.value ?? 0)
                 guard uidInt > 0 else { return nil }
                 return MessageHeader(
@@ -734,7 +734,7 @@ public actor PostServer {
                     from: info.from ?? "Unknown",
                     subject: info.subject ?? "(No Subject)",
                     date: formatDate(info.date),
-                    flag: info.flagColor?.rawValue
+                    flag: MailFlagColor(flags: info.flags)?.rawValue
                 )
             }
             return headers.sorted { $0.uid < $1.uid }
@@ -1531,7 +1531,7 @@ public actor PostServer {
             from: message.from ?? "Unknown",
             subject: message.subject ?? "(No Subject)",
             date: formatDate(message.date),
-            flag: message.header.flagColor?.rawValue
+            flag: MailFlagColor(flags: message.flags)?.rawValue
         )
     }
 
