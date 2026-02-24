@@ -1433,13 +1433,13 @@ public actor PostServer {
         switch format.lowercased() {
         case "html":
             htmlBody = body
-            textBody = body.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            textBody = Self.htmlToPlainText(body)
         case "markdown":
-            htmlBody = Self.wrapMarkdownHTML(MarkdownToHTML.convert(body))
+            htmlBody = Self.wrapMarkdownHTML(Self.markdownToHTML(body))
             textBody = body  // Keep raw markdown for plain text part
         default:
             textBody = body
-            htmlBody = nil
+            htmlBody = Self.wrapPlainTextHTML(Self.plainTextToHTML(body))
         }
 
         var emailAttachments: [Attachment]?
@@ -1603,6 +1603,102 @@ public actor PostServer {
         </body>
         </html>
         """
+    }
+
+    /// Wraps plain-text-converted HTML in a minimal email-safe document.
+    private static func wrapPlainTextHTML(_ html: String) -> String {
+        """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        </head>
+        <body>
+        \(html)
+        </body>
+        </html>
+        """
+    }
+
+    /// Converts Markdown source into HTML.
+    private static func markdownToHTML(_ markdown: String) -> String {
+        MarkdownToHTML.convert(markdown)
+    }
+
+    /// Converts plain text into simple HTML paragraphs while preserving newlines.
+    private static func plainTextToHTML(_ text: String) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+
+        let lines = normalized.components(separatedBy: "\n")
+        var paragraphs: [String] = []
+        var currentParagraph: [String] = []
+
+        for line in lines {
+            if line.isEmpty {
+                if !currentParagraph.isEmpty {
+                    paragraphs.append(currentParagraph.joined(separator: "\n"))
+                    currentParagraph.removeAll(keepingCapacity: true)
+                }
+                continue
+            }
+            currentParagraph.append(line)
+        }
+
+        if !currentParagraph.isEmpty {
+            paragraphs.append(currentParagraph.joined(separator: "\n"))
+        }
+
+        if paragraphs.isEmpty {
+            return "<p></p>"
+        }
+
+        return paragraphs
+            .map { paragraph in
+                let escaped = Self.escapeHTML(paragraph)
+                    .replacingOccurrences(of: "\n", with: "<br>\n")
+                return "<p>\(escaped)</p>"
+            }
+            .joined(separator: "\n")
+    }
+
+    /// Converts HTML to plain text for a text/plain MIME alternative.
+    private static func htmlToPlainText(_ html: String) -> String {
+        if let data = html.data(using: .utf8) {
+            let options: [NSAttributedString.DocumentReadingOptionKey: Any] = [
+                .documentType: NSAttributedString.DocumentType.html,
+                .characterEncoding: String.Encoding.utf8.rawValue
+            ]
+            if let attributed = try? NSAttributedString(data: data, options: options, documentAttributes: nil) {
+                return attributed.string
+                    .replacingOccurrences(of: "\u{00A0}", with: " ")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+
+        var text = html.replacingOccurrences(of: "(?i)<br\\s*/?>", with: "\n", options: .regularExpression)
+        text = text.replacingOccurrences(of: "(?i)</?(p|div|h[1-6]|li|tr|table|ul|ol|blockquote|pre)\\b[^>]*>", with: "\n", options: .regularExpression)
+        text = text.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: "&nbsp;", with: " ")
+        text = text.replacingOccurrences(of: "&amp;", with: "&")
+        text = text.replacingOccurrences(of: "&lt;", with: "<")
+        text = text.replacingOccurrences(of: "&gt;", with: ">")
+        text = text.replacingOccurrences(of: "&quot;", with: "\"")
+        text = text.replacingOccurrences(of: "&#39;", with: "'")
+        text = text.replacingOccurrences(of: "[ \\t]+\\n", with: "\n", options: .regularExpression)
+        text = text.replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func escapeHTML(_ text: String) -> String {
+        var escaped = text
+        escaped = escaped.replacingOccurrences(of: "&", with: "&amp;")
+        escaped = escaped.replacingOccurrences(of: "<", with: "&lt;")
+        escaped = escaped.replacingOccurrences(of: ">", with: "&gt;")
+        escaped = escaped.replacingOccurrences(of: "\"", with: "&quot;")
+        escaped = escaped.replacingOccurrences(of: "'", with: "&#39;")
+        return escaped
     }
 
     /// Sanitizes a string for use as a filename.

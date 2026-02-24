@@ -1001,14 +1001,12 @@ extension PostCLI {
         @Option(name: .long, help: "Email subject")
         var subject: String
 
-        @Option(name: .long, help: "Plain text body (mutually exclusive with --html and --markdown)")
-        var body: String?
-
-        @Option(name: .long, help: "HTML body (mutually exclusive with --body and --markdown)")
-        var html: String?
-
-        @Option(name: .long, help: "Markdown body (mutually exclusive with --body and --html)")
-        var markdown: String?
+        @Option(
+            name: .long,
+            help: "Body text or file path. Existing files are read; inline values decode escapes and auto-detect as HTML, Markdown, or plain text.",
+            transform: resolveDraftBodyInputForCLI
+        )
+        var body: String
 
         @Option(name: .long, help: "Comma-separated CC addresses")
         var cc: String?
@@ -1028,24 +1026,15 @@ extension PostCLI {
         @OptionGroup
         var globals: GlobalOptions
 
-        func validate() throws {
-            let count = [body, html, markdown].compactMap({ $0 }).count
-            if count == 0 {
-                throw ValidationError("One of --body, --html, or --markdown is required.")
-            }
-            if count > 1 {
-                throw ValidationError("Only one of --body, --html, or --markdown may be specified.")
-            }
-        }
-
         func run() async throws {
-            let (content, format): (String, String)
-            if let body {
-                (content, format) = (body, "text")
-            } else if let html {
-                (content, format) = (html, "html")
-            } else {
-                (content, format) = (markdown!, "markdown")
+            let format: String
+            switch detectDraftBodyInputFormat(body) {
+            case .html:
+                format = "html"
+            case .markdown:
+                format = "markdown"
+            case .plainText:
+                format = "text"
             }
 
             try await withClient { client in
@@ -1056,7 +1045,7 @@ extension PostCLI {
                     from: from,
                     to: to,
                     subject: subject,
-                    body: content,
+                    body: body,
                     format: format,
                     cc: cc,
                     bcc: bcc,
@@ -1752,6 +1741,132 @@ private func unfoldFetchHeaderValue(_ value: String) -> String {
     }
     let range = NSRange(value.startIndex..<value.endIndex, in: value)
     return regex.stringByReplacingMatches(in: value, range: range, withTemplate: " ")
+}
+
+enum DraftBodyInputFormat {
+    case html
+    case markdown
+    case plainText
+}
+
+func resolveDraftBodyInputForCLI(_ value: String) throws -> String {
+    let expandedPath = NSString(string: value).expandingTildeInPath
+    var isDirectory = ObjCBool(false)
+    if FileManager.default.fileExists(atPath: expandedPath, isDirectory: &isDirectory) {
+        guard !isDirectory.boolValue else {
+            throw ValidationError("--body path '\(value)' is a directory.")
+        }
+
+        let url = URL(fileURLWithPath: expandedPath)
+        do {
+            return try String(contentsOf: url, encoding: .utf8)
+        } catch {
+            guard let data = try? Data(contentsOf: url),
+                  let fallback = String(data: data, encoding: .isoLatin1) else {
+                throw ValidationError("Failed to read --body file '\(value)': \(error.localizedDescription)")
+            }
+            return fallback
+        }
+    }
+
+    return decodeBodyEscapesForCLI(value)
+}
+
+func detectDraftBodyInputFormat(_ content: String) -> DraftBodyInputFormat {
+    if looksLikeHTML(content) {
+        return .html
+    }
+    if looksLikeMarkdown(content) {
+        return .markdown
+    }
+    return .plainText
+}
+
+private func looksLikeHTML(_ content: String) -> Bool {
+    guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        return false
+    }
+
+    let pattern = #"(?is)<!DOCTYPE\s+html|<\s*/?\s*(html|head|body|div|span|p|br|h[1-6]|ul|ol|li|table|tr|td|th|a|img|strong|em|b|i|blockquote|pre|code)\b[^>]*>"#
+    return matchesPattern(content, pattern: pattern)
+}
+
+private func looksLikeMarkdown(_ content: String) -> Bool {
+    guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        return false
+    }
+
+    let patterns = [
+        #"(?m)^\s{0,3}#{1,6}\s+\S"#,
+        #"(?m)^\s{0,3}[-*+]\s+\S"#,
+        #"(?m)^\s{0,3}\d+\.\s+\S"#,
+        #"(?m)^>\s+\S"#,
+        #"(?m)^(```|~~~)"#,
+        #"(?m)^([-*_])\1{2,}\s*$"#,
+        #"\[[^\]]+\]\([^)]+\)"#,
+        #"!\[[^\]]*\]\([^)]+\)"#,
+        #"`[^`\n]+`"#,
+        #"\*\*[^*\n]+\*\*|__[^_\n]+__"#
+    ]
+
+    return patterns.contains { matchesPattern(content, pattern: $0) }
+}
+
+private func matchesPattern(_ content: String, pattern: String) -> Bool {
+    guard let regex = try? NSRegularExpression(pattern: pattern) else {
+        return false
+    }
+    let range = NSRange(content.startIndex..<content.endIndex, in: content)
+    return regex.firstMatch(in: content, range: range) != nil
+}
+
+private func decodeBodyEscapesForCLI(_ value: String) -> String {
+    guard value.contains("\\") else {
+        return value
+    }
+
+    var decoded = String()
+    decoded.reserveCapacity(value.count)
+    var index = value.startIndex
+
+    while index < value.endIndex {
+        let character = value[index]
+        guard character == "\\" else {
+            decoded.append(character)
+            value.formIndex(after: &index)
+            continue
+        }
+
+        let nextIndex = value.index(after: index)
+        guard nextIndex < value.endIndex else {
+            decoded.append("\\")
+            index = nextIndex
+            continue
+        }
+
+        let next = value[nextIndex]
+        switch next {
+        case "n":
+            decoded.append("\n")
+        case "r":
+            decoded.append("\r")
+        case "t":
+            decoded.append("\t")
+        case "\\":
+            decoded.append("\\")
+        case "\"":
+            decoded.append("\"")
+        case "'":
+            decoded.append("'")
+        default:
+            decoded.append("\\")
+            decoded.append(next)
+        }
+
+        index = value.index(after: nextIndex)
+    }
+
+    return decoded
 }
 
 private func pad(_ value: String, to width: Int) -> String {
