@@ -148,6 +148,33 @@ public actor PostServer {
         formatter.dateFormat = "HH:mm:ss"
         return formatter
     }()
+    private static let idleHeartbeatCheckIntervalNanoseconds: UInt64 = 60_000_000_000
+    private static let idleHeartbeatInactivityThresholdSeconds: TimeInterval = 1_500
+
+    private actor IdleWatchActivityTracker {
+        private var lastActivityAt = Date()
+        private var activeFetchOperations = 0
+
+        func markActivity() {
+            lastActivityAt = Date()
+        }
+
+        func beginFetchActivity() {
+            activeFetchOperations += 1
+            lastActivityAt = Date()
+        }
+
+        func endFetchActivity() {
+            if activeFetchOperations > 0 {
+                activeFetchOperations -= 1
+            }
+            lastActivityAt = Date()
+        }
+
+        func inactivitySnapshot(now: Date = Date()) -> (seconds: TimeInterval, hasActiveFetch: Bool) {
+            (now.timeIntervalSince(lastActivityAt), activeFetchOperations > 0)
+        }
+    }
 
     private static func stderr(_ message: String) {
         if let data = ("[postd] \(message)\n").data(using: .utf8) {
@@ -262,6 +289,7 @@ public actor PostServer {
                 Self.stderr("runIdleWatch: getting connection for \(serverId)")
                 Self.idleLog("runIdleWatch: getting connection for \(serverId)")
                 let server = try await connectionManager.connection(for: serverId)
+                let activityTracker = IdleWatchActivityTracker()
                 Self.stderr("runIdleWatch: got connection for \(serverId)")
                 Self.idleLog("runIdleWatch: got connection for \(serverId)")
 
@@ -289,6 +317,7 @@ public actor PostServer {
                             lastSeenUID = Int(uid.value)
                         }
                     }
+                    await activityTracker.markActivity()
 
                     Self.stderr("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID)")
                     Self.idleLog("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID)")
@@ -304,7 +333,35 @@ public actor PostServer {
                 Self.idleLog("IDLE connection established for \(serverId)/\(mailbox)")
                 logger.info("IDLE connected for \(serverId)/\(mailbox)")
 
+                let heartbeatTask = Task {
+                    while !Task.isCancelled {
+                        do {
+                            try await Task.sleep(nanoseconds: Self.idleHeartbeatCheckIntervalNanoseconds)
+                        } catch {
+                            break
+                        }
+                        if Task.isCancelled { break }
+
+                        let snapshot = await activityTracker.inactivitySnapshot()
+                        if snapshot.hasActiveFetch || snapshot.seconds < Self.idleHeartbeatInactivityThresholdSeconds {
+                            continue
+                        }
+
+                        do {
+                            _ = try await server.noop()
+                            await activityTracker.markActivity()
+                            let inactivity = Int(snapshot.seconds.rounded())
+                            let message = "Primary heartbeat NOOP succeeded for \(serverId)/\(mailbox) after \(inactivity)s inactivity"
+                            Self.stderr(message)
+                            Self.idleLog(message)
+                        } catch {
+                            Self.idleLog("ERROR primary heartbeat NOOP failed for \(serverId)/\(mailbox): \(String(describing: error))")
+                        }
+                    }
+                }
+
                 defer {
+                    heartbeatTask.cancel()
                     Task {
                         try? await idleSession.done()
                         Self.idleLog("IDLE connection disconnected for \(serverId)/\(mailbox)")
@@ -315,7 +372,15 @@ public actor PostServer {
                 // Catch any messages that arrived during setup (between baseline and IDLE start)
                 do {
                     Self.idleLog("IDLE catch-up fetch for \(serverId)/\(mailbox): minUID=\(lastSeenUID + 1)")
-                    let caughtUp = try await Self.fetchNewMessages(using: server, mailbox: mailbox, minUID: lastSeenUID + 1)
+                    await activityTracker.beginFetchActivity()
+                    let caughtUp: [MessageHeader]
+                    do {
+                        caughtUp = try await Self.fetchNewMessages(using: server, mailbox: mailbox, minUID: lastSeenUID + 1)
+                    } catch {
+                        await activityTracker.endFetchActivity()
+                        throw error
+                    }
+                    await activityTracker.endFetchActivity()
                     Self.stderr("IDLE catch-up for \(serverId)/\(mailbox): fetched \(caughtUp.count) messages since uid \(lastSeenUID + 1)")
                     Self.idleLog("IDLE catch-up for \(serverId)/\(mailbox): fetched \(caughtUp.count) messages since uid \(lastSeenUID + 1)")
                     for msg in caughtUp {
@@ -345,13 +410,22 @@ public actor PostServer {
                     let eventDescription = Self.describeIdleEvent(event)
                     Self.stderr("IDLE event for \(serverId)/\(mailbox): \(eventDescription)")
                     Self.idleLog("IDLE event for \(serverId)/\(mailbox): \(eventDescription)")
+                    await activityTracker.markActivity()
 
                     switch event {
                     case .exists(let count):
                         Self.stderr("IDLE EXISTS for \(serverId)/\(mailbox): count=\(count) lastSeenUID=\(lastSeenUID)")
                         Self.idleLog("IDLE EXISTS for \(serverId)/\(mailbox): count=\(count) lastSeenUID=\(lastSeenUID)")
                         Self.idleLog("Fetching new messages after EXISTS for \(serverId)/\(mailbox): minUID=\(lastSeenUID + 1)")
-                        let newMessages = try await Self.fetchNewMessages(using: server, mailbox: mailbox, minUID: lastSeenUID + 1)
+                        await activityTracker.beginFetchActivity()
+                        let newMessages: [MessageHeader]
+                        do {
+                            newMessages = try await Self.fetchNewMessages(using: server, mailbox: mailbox, minUID: lastSeenUID + 1)
+                        } catch {
+                            await activityTracker.endFetchActivity()
+                            throw error
+                        }
+                        await activityTracker.endFetchActivity()
                         Self.stderr("IDLE delta fetch for \(serverId)/\(mailbox): fetched \(newMessages.count) messages since uid \(lastSeenUID + 1)")
                         Self.idleLog("IDLE delta fetch for \(serverId)/\(mailbox): fetched \(newMessages.count) messages since uid \(lastSeenUID + 1)")
                         for msg in newMessages {
