@@ -38,9 +38,16 @@ extension PostDaemon {
 
             let devNull = URL(fileURLWithPath: "/dev/null")
             process.standardInput = try? FileHandle(forReadingFrom: devNull)
-            let nullOutput = try? FileHandle(forWritingTo: devNull)
-            process.standardOutput = nullOutput
-            process.standardError = nullOutput
+
+            let logURL = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("clawd/mail-room/log/postd-idle.log")
+            try? FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            let logHandle = try? FileHandle(forWritingTo: logURL)
+            _ = try? logHandle?.seekToEnd()
+
+            process.standardOutput = logHandle
+            process.standardError = logHandle
 
             try process.run()
             logToStderr("postd started in background (PID \(process.processIdentifier)).")
@@ -51,9 +58,11 @@ extension PostDaemon {
 
             let configuration = try PostConfiguration.load()
 
-            #if canImport(OSLog)
-            LoggingSystem.bootstrapWithOSLog(subsystem: "com.cocoanetics.Post")
-            #endif
+            LoggingSystem.bootstrap { label in
+                var handler = StreamLogHandler.standardError(label: label)
+                handler.logLevel = .trace
+                return handler
+            }
 
             let server = PostServer(configuration: configuration)
             var transports: [any Transport] = []
