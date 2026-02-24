@@ -142,7 +142,7 @@
       "location" : "https://github.com/Cocoanetics/SwiftMail",
       "state" : {
         "branch" : "main",
-        "revision" : "0d88fd90f92aeae91161d41088f3836c6617ef20"
+        "revision" : "c257ef018c18db5e95099be7a28d16434d0e8b19"
       }
     },
     {
@@ -160,7 +160,7 @@
       "location" : "https://github.com/Cocoanetics/SwiftText",
       "state" : {
         "branch" : "main",
-        "revision" : "f648949beca402cb080f94a77c262434e39d6e63"
+        "revision" : "cc14da0d811cbaf4b949efdcd53b0f88daef7e92"
       }
     },
     {

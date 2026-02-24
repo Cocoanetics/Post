@@ -1,11 +1,13 @@
 import Darwin
 import Dispatch
 import Foundation
+import Logging
 import PostServer
 import SwiftMCP
 
 public final class SignalHandler {
     private actor State {
+        private let logger = Logger(label: "com.cocoanetics.Post.SignalHandler")
         private var sources: [DispatchSourceSignal] = []
         private var isShuttingDown = false
         private var transports: [any Transport]
@@ -40,7 +42,7 @@ public final class SignalHandler {
 
         private func handle(signal signalValue: Int32) async {
             if signalValue == SIGHUP {
-                logToStderr("Received SIGHUP, reloading configuration...")
+                logger.info("Received SIGHUP, reloading configuration...")
                 await server?.reloadConfiguration()
                 return
             }
@@ -51,13 +53,13 @@ public final class SignalHandler {
             isShuttingDown = true
 
             let signalName = signalValue == SIGTERM ? "SIGTERM" : "SIGINT"
-            logToStderr("Received \(signalName), shutting down transports...")
+            logger.info("Received \(signalName), shutting down transports...")
 
             for transport in transports {
                 do {
                     try await transport.stop()
                 } catch {
-                    logToStderr("Transport shutdown error: \(error)")
+                    logger.error("Transport shutdown error: \(String(describing: error))")
                 }
             }
         }

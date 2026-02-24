@@ -18,6 +18,7 @@ struct PostDaemon: AsyncParsableCommand {
 extension PostDaemon {
     struct Start: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Start the daemon")
+        private static let daemonLogRelativePath = "clawd/mail-room/log/postd-idle.log"
 
         @Flag(name: .long, help: "Run the daemon in the foreground (useful for debugging).")
         var foreground: Bool = false
@@ -26,6 +27,7 @@ extension PostDaemon {
             if foreground {
                 try await runForeground()
             } else {
+                bootstrapDaemonLogging(level: .info)
                 try launchDetachedProcess()
             }
         }
@@ -39,8 +41,7 @@ extension PostDaemon {
             let devNull = URL(fileURLWithPath: "/dev/null")
             process.standardInput = try? FileHandle(forReadingFrom: devNull)
 
-            let logURL = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("clawd/mail-room/log/postd-idle.log")
+            let logURL = Self.daemonLogURL
             try? FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             FileManager.default.createFile(atPath: logURL.path, contents: nil)
             let logHandle = try? FileHandle(forWritingTo: logURL)
@@ -50,19 +51,22 @@ extension PostDaemon {
             process.standardError = logHandle
 
             try process.run()
-            logToStderr("postd started in background (PID \(process.processIdentifier)).")
+            let logger = Logger(label: "com.cocoanetics.Post.postd")
+            logger.info("postd started in background (PID \(process.processIdentifier)).")
         }
 
         private func runForeground() async throws {
             try PIDFileManager.ensureNotRunning()
 
             let configuration = try PostConfiguration.load()
+            try Self.redirectStandardStreamsToLogFile()
 
             LoggingSystem.bootstrap { label in
                 var handler = StreamLogHandler.standardError(label: label)
                 handler.logLevel = .trace
                 return handler
             }
+            let daemonLogger = Logger(label: "com.cocoanetics.Post.postd")
 
             let server = PostServer(configuration: configuration)
             var transports: [any Transport] = []
@@ -75,14 +79,14 @@ extension PostDaemon {
                     let httpTransport = HTTPSSETransport(server: server, port: httpPort)
                     try await httpTransport.start()
                     transports.append(httpTransport)
-                    logToStderr("MCP HTTP+SSE transport listening on http://\(String.localHostname):\(httpTransport.port)/sse")
+                    daemonLogger.info("MCP HTTP+SSE transport listening on http://\(String.localHostname):\(httpTransport.port)/sse")
                 }
 
                 try await tcpTransport.start()
-                logToStderr("MCP Server \(server.serverName) (\(server.serverVersion)) started with TCP+Bonjour service '\(PostServer.Client.serverName)'.")
+                daemonLogger.info("MCP Server \(server.serverName) (\(server.serverVersion)) started with TCP+Bonjour service '\(PostServer.Client.serverName)'.")
 
                 try PIDFileManager.writeCurrentPID()
-                logToStderr("PID written to \(PIDFileManager.pidURL.path)")
+                daemonLogger.info("PID written to \(PIDFileManager.pidURL.path)")
 
                 // Start configured IMAP IDLE watches (dedicated connections; does not interfere with primary).
                 Task {
@@ -96,14 +100,41 @@ extension PostDaemon {
 
                 await server.shutdown()
                 try? PIDFileManager.removePIDFile()
-                logToStderr("postd stopped.")
+                daemonLogger.info("postd stopped.")
             } catch {
                 for transport in transports {
                     try? await transport.stop()
                 }
                 await server.shutdown()
                 try? PIDFileManager.removePIDFile()
+                daemonLogger.error("postd failed: \(String(describing: error))")
                 throw error
+            }
+        }
+
+        private static var daemonLogURL: URL {
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(daemonLogRelativePath)
+        }
+
+        private static func redirectStandardStreamsToLogFile() throws {
+            let logURL = daemonLogURL
+            try FileManager.default.createDirectory(
+                at: logURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            if !FileManager.default.fileExists(atPath: logURL.path) {
+                FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            }
+
+            let logHandle = try FileHandle(forWritingTo: logURL)
+            _ = try logHandle.seekToEnd()
+
+            let fileDescriptor = logHandle.fileDescriptor
+            guard dup2(fileDescriptor, STDOUT_FILENO) >= 0 else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+            guard dup2(fileDescriptor, STDERR_FILENO) >= 0 else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
             }
         }
     }
@@ -112,13 +143,16 @@ extension PostDaemon {
         static let configuration = CommandConfiguration(abstract: "Stop a running daemon")
 
         func run() async throws {
+            bootstrapDaemonLogging(level: .info)
+            let logger = Logger(label: "com.cocoanetics.Post.postd")
+
             guard let pid = try PIDFileManager.readPID() else {
-                logToStderr("postd is not running (no PID file).")
+                logger.info("postd is not running (no PID file).")
                 return
             }
 
             guard PIDFileManager.isProcessRunning(pid) else {
-                logToStderr("Stale PID file found for PID \(pid). Removing it.")
+                logger.warning("Stale PID file found for PID \(pid). Removing it.")
                 try PIDFileManager.removePIDFile()
                 return
             }
@@ -127,7 +161,7 @@ extension PostDaemon {
                 throw ValidationError("Failed to send SIGTERM to PID \(pid): \(String(cString: strerror(errno)))")
             }
 
-            logToStderr("Sent SIGTERM to postd (PID \(pid)).")
+            logger.info("Sent SIGTERM to postd (PID \(pid)).")
 
             for _ in 0..<50 {
                 if !PIDFileManager.isProcessRunning(pid) {
@@ -137,10 +171,10 @@ extension PostDaemon {
             }
 
             if PIDFileManager.isProcessRunning(pid) {
-                logToStderr("postd is still shutting down.")
+                logger.warning("postd is still shutting down.")
             } else {
                 try PIDFileManager.removePIDFile()
-                logToStderr("postd stopped.")
+                logger.info("postd stopped.")
             }
         }
     }
@@ -149,13 +183,16 @@ extension PostDaemon {
         static let configuration = CommandConfiguration(abstract: "Reload configuration (send SIGHUP)")
 
         func run() async throws {
+            bootstrapDaemonLogging(level: .info)
+            let logger = Logger(label: "com.cocoanetics.Post.postd")
+
             guard let pid = try PIDFileManager.readPID() else {
-                logToStderr("postd is not running (no PID file).")
+                logger.info("postd is not running (no PID file).")
                 throw ExitCode.failure
             }
 
             guard PIDFileManager.isProcessRunning(pid) else {
-                logToStderr("Stale PID file found for PID \(pid).")
+                logger.warning("Stale PID file found for PID \(pid).")
                 try PIDFileManager.removePIDFile()
                 throw ExitCode.failure
             }
@@ -164,7 +201,7 @@ extension PostDaemon {
                 throw ValidationError("Failed to send SIGHUP to PID \(pid): \(String(cString: strerror(errno)))")
             }
 
-            logToStderr("Sent SIGHUP to postd (PID \(pid)). Configuration will be reloaded.")
+            logger.info("Sent SIGHUP to postd (PID \(pid)). Configuration will be reloaded.")
         }
     }
 
@@ -172,15 +209,18 @@ extension PostDaemon {
         static let configuration = CommandConfiguration(abstract: "Show daemon status")
 
         func run() async throws {
+            bootstrapDaemonLogging(level: .info)
+            let logger = Logger(label: "com.cocoanetics.Post.postd")
+
             guard let pid = try PIDFileManager.readPID() else {
-                logToStderr("postd is not running.")
+                logger.info("postd is not running.")
                 return
             }
 
             if PIDFileManager.isProcessRunning(pid) {
-                logToStderr("postd is running (PID \(pid)).")
+                logger.info("postd is running (PID \(pid)).")
             } else {
-                logToStderr("postd is not running (stale PID file for PID \(pid)).")
+                logger.warning("postd is not running (stale PID file for PID \(pid)).")
             }
         }
     }
@@ -242,10 +282,10 @@ private enum PIDFileManager {
     }
 }
 
-func logToStderr(_ message: String) {
-    guard let data = (message + "\n").data(using: .utf8) else {
-        return
+func bootstrapDaemonLogging(level: Logger.Level) {
+    LoggingSystem.bootstrap { label in
+        var handler = StreamLogHandler.standardError(label: label)
+        handler.logLevel = level
+        return handler
     }
-
-    try? FileHandle.standardError.write(contentsOf: data)
 }

@@ -138,16 +138,7 @@ public actor PostServer {
     private let logger = Logger(label: "com.cocoanetics.Post.PostServer")
 
     private var idleWatchTasks: [String: Task<Void, Never>] = [:]
-    private static let idleLogQueue = DispatchQueue(label: "com.cocoanetics.Post.PostServer.idleLog")
-    private static let idleLogURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("clawd/mail-room/log/postd-idle.log")
-    private static let idleLogTimeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = .current
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter
-    }()
+    private static let idleDiagnosticLogger = Logger(label: "com.cocoanetics.Post.IDLE.Diagnostics")
     private static let idleHeartbeatCheckIntervalNanoseconds: UInt64 = 60_000_000_000
     private static let idleHeartbeatInactivityThresholdSeconds: TimeInterval = 1_500
 
@@ -176,43 +167,14 @@ public actor PostServer {
         }
     }
 
-    private static func stderr(_ message: String) {
-        if let data = ("[postd] \(message)\n").data(using: .utf8) {
-            try? FileHandle.standardError.write(contentsOf: data)
+    /// Emits IDLE diagnostics through swift-log so daemon log routing can handle persistence.
+    private static func logDiagnostic(_ message: String) {
+        let logger = idleDiagnosticLogger
+        if message.hasPrefix("ERROR ") {
+            logger.error("\(message)")
+        } else {
+            logger.trace("\(message)")
         }
-    }
-
-    /// Appends IDLE diagnostics to ~/clawd/mail-room/log/postd-idle.log with [HH:MM:SS] timestamps.
-    private static func idleLog(_ message: String) {
-        idleLogQueue.sync {
-            let timestamp = idleLogTimeFormatter.string(from: Date())
-            guard let data = ("[\(timestamp)] \(message)\n").data(using: .utf8) else {
-                return
-            }
-
-            do {
-                try FileManager.default.createDirectory(
-                    at: idleLogURL.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                if !FileManager.default.fileExists(atPath: idleLogURL.path) {
-                    FileManager.default.createFile(atPath: idleLogURL.path, contents: nil)
-                }
-
-                let handle = try FileHandle(forWritingTo: idleLogURL)
-                defer {
-                    try? handle.close()
-                }
-                try handle.seekToEnd()
-                try handle.write(contentsOf: data)
-            } catch {
-                Self.stderr("Failed to write IDLE log entry: \(String(describing: error))")
-            }
-        }
-    }
-
-    private nonisolated func stderr(_ message: String) {
-        Self.stderr(message)
     }
 
     public init(configuration: PostConfiguration) {
@@ -225,13 +187,11 @@ public actor PostServer {
         let watchConfigurations = await configuredIdleWatches()
         for watchConfiguration in watchConfigurations {
             if idleWatchTasks[watchConfiguration.serverId] != nil {
-                stderr("IDLE watch already running for server=\(watchConfiguration.serverId)")
-                Self.idleLog("IDLE watch already running for server=\(watchConfiguration.serverId)")
+                Self.logDiagnostic("IDLE watch already running for server=\(watchConfiguration.serverId)")
                 continue
             }
 
-            stderr("Starting IDLE watch for server=\(watchConfiguration.serverId) mailbox=\(watchConfiguration.mailbox) command=\(watchConfiguration.command ?? "<nil>")")
-            Self.idleLog("Starting IDLE watch for server=\(watchConfiguration.serverId) mailbox=\(watchConfiguration.mailbox) command=\(watchConfiguration.command ?? "<nil>")")
+            Self.logDiagnostic("Starting IDLE watch for server=\(watchConfiguration.serverId) mailbox=\(watchConfiguration.mailbox) command=\(watchConfiguration.command ?? "<nil>")")
             logger.info("Starting IDLE watch for server=\(watchConfiguration.serverId) mailbox=\(watchConfiguration.mailbox)")
 
             let manager = connectionManager
@@ -249,8 +209,7 @@ public actor PostServer {
     /// Resolves all configured daemon IDLE watches from current configuration.
     private func configuredIdleWatches() async -> [IdleWatchConfiguration] {
         let infos = await connectionManager.serverInfos()
-        stderr("startIdleWatches: found \(infos.count) servers")
-        Self.idleLog("startIdleWatches: found \(infos.count) servers")
+        Self.logDiagnostic("startIdleWatches: found \(infos.count) servers")
 
         var watchConfigurations: [IdleWatchConfiguration] = []
         watchConfigurations.reserveCapacity(infos.count)
@@ -261,8 +220,7 @@ public actor PostServer {
             }
 
             guard config.idle == true else {
-                stderr("IDLE disabled for server=\(info.id)")
-                Self.idleLog("IDLE disabled for server=\(info.id)")
+                Self.logDiagnostic("IDLE disabled for server=\(info.id)")
                 continue
             }
 
@@ -286,15 +244,12 @@ public actor PostServer {
         while !Task.isCancelled {
             do {
                 // Get connection inside the detached task (async call to actor)
-                Self.stderr("runIdleWatch: getting connection for \(serverId)")
-                Self.idleLog("runIdleWatch: getting connection for \(serverId)")
+                Self.logDiagnostic("runIdleWatch: getting connection for \(serverId)")
                 let server = try await connectionManager.connection(for: serverId)
                 let activityTracker = IdleWatchActivityTracker()
-                Self.stderr("runIdleWatch: got connection for \(serverId)")
-                Self.idleLog("runIdleWatch: got connection for \(serverId)")
+                Self.logDiagnostic("runIdleWatch: got connection for \(serverId)")
 
-                Self.stderr("runIdleWatch loop starting for \(serverId)/\(mailbox)")
-                Self.idleLog("runIdleWatch loop starting for \(serverId)/\(mailbox)")
+                Self.logDiagnostic("runIdleWatch loop starting for \(serverId)/\(mailbox)")
 
                 // Baseline: Get current max UID using primary connection
                 var lastSeenUID: Int = 0
@@ -319,18 +274,16 @@ public actor PostServer {
                     }
                     await activityTracker.markActivity()
 
-                    Self.stderr("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID)")
-                    Self.idleLog("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID)")
+                    Self.logDiagnostic("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID)")
                     logger.info("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID)")
                 } catch {
-                    Self.idleLog("ERROR baseline failed for \(serverId)/\(mailbox): \(String(describing: error))")
+                    Self.logDiagnostic("ERROR baseline failed for \(serverId)/\(mailbox): \(String(describing: error))")
                     logger.warning("Failed to build baseline for \(serverId)/\(mailbox): \(String(describing: error))")
                 }
 
                 // Start IDLE on the mailbox (IMAPServer creates a dedicated connection)
                 let idleSession = try await server.idle(on: mailbox)
-                Self.stderr("IDLE connected for \(serverId)/\(mailbox)")
-                Self.idleLog("IDLE connection established for \(serverId)/\(mailbox)")
+                Self.logDiagnostic("IDLE connection established for \(serverId)/\(mailbox)")
                 logger.info("IDLE connected for \(serverId)/\(mailbox)")
 
                 let heartbeatTask = Task {
@@ -352,10 +305,9 @@ public actor PostServer {
                             await activityTracker.markActivity()
                             let inactivity = Int(snapshot.seconds.rounded())
                             let message = "Primary heartbeat NOOP succeeded for \(serverId)/\(mailbox) after \(inactivity)s inactivity"
-                            Self.stderr(message)
-                            Self.idleLog(message)
+                            Self.logDiagnostic(message)
                         } catch {
-                            Self.idleLog("ERROR primary heartbeat NOOP failed for \(serverId)/\(mailbox): \(String(describing: error))")
+                            Self.logDiagnostic("ERROR primary heartbeat NOOP failed for \(serverId)/\(mailbox): \(String(describing: error))")
                         }
                     }
                 }
@@ -364,14 +316,14 @@ public actor PostServer {
                     heartbeatTask.cancel()
                     Task {
                         try? await idleSession.done()
-                        Self.idleLog("IDLE connection disconnected for \(serverId)/\(mailbox)")
+                        Self.logDiagnostic("IDLE connection disconnected for \(serverId)/\(mailbox)")
                         logger.info("IDLE session closed for \(serverId)/\(mailbox)")
                     }
                 }
 
                 // Catch any messages that arrived during setup (between baseline and IDLE start)
                 do {
-                    Self.idleLog("IDLE catch-up fetch for \(serverId)/\(mailbox): minUID=\(lastSeenUID + 1)")
+                    Self.logDiagnostic("IDLE catch-up fetch for \(serverId)/\(mailbox): minUID=\(lastSeenUID + 1)")
                     await activityTracker.beginFetchActivity()
                     let caughtUp: [MessageHeader]
                     do {
@@ -381,42 +333,38 @@ public actor PostServer {
                         throw error
                     }
                     await activityTracker.endFetchActivity()
-                    Self.stderr("IDLE catch-up for \(serverId)/\(mailbox): fetched \(caughtUp.count) messages since uid \(lastSeenUID + 1)")
-                    Self.idleLog("IDLE catch-up for \(serverId)/\(mailbox): fetched \(caughtUp.count) messages since uid \(lastSeenUID + 1)")
+                    Self.logDiagnostic("IDLE catch-up for \(serverId)/\(mailbox): fetched \(caughtUp.count) messages since uid \(lastSeenUID + 1)")
                     for msg in caughtUp {
-                        Self.idleLog("IDLE catch-up examining message uid=\(msg.uid) vs lastSeenUID=\(lastSeenUID)")
+                        Self.logDiagnostic("IDLE catch-up examining message uid=\(msg.uid) vs lastSeenUID=\(lastSeenUID)")
                         if msg.uid > lastSeenUID {
                             lastSeenUID = msg.uid
-                            Self.stderr("New message (catch-up) \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
-                            Self.idleLog("New message (catch-up) \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
+                            Self.logDiagnostic("New message (catch-up) \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
                             logger.info("New message (catch-up) on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
                             if let command {
                                 let hookMessage = await Self.fetchHookMessagePayload(using: server, mailbox: mailbox, header: msg)
                                 Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: hookMessage)
                             }
                         } else {
-                            Self.idleLog("IDLE catch-up SKIPPED message uid=\(msg.uid) because lastSeenUID=\(lastSeenUID)")
+                            Self.logDiagnostic("IDLE catch-up SKIPPED message uid=\(msg.uid) because lastSeenUID=\(lastSeenUID)")
                         }
                     }
                 } catch {
-                    Self.idleLog("ERROR catch-up fetch failed for \(serverId)/\(mailbox): \(String(describing: error))")
+                    Self.logDiagnostic("ERROR catch-up fetch failed for \(serverId)/\(mailbox): \(String(describing: error))")
                     logger.warning("Catch-up fetch failed for \(serverId)/\(mailbox): \(String(describing: error))")
                 }
 
                 for await event in idleSession.events {
                     if Task.isCancelled { break }
 
-                    // Log every event to stderr
+                    // Log every IDLE event for diagnostics.
                     let eventDescription = Self.describeIdleEvent(event)
-                    Self.stderr("IDLE event for \(serverId)/\(mailbox): \(eventDescription)")
-                    Self.idleLog("IDLE event for \(serverId)/\(mailbox): \(eventDescription)")
+                    Self.logDiagnostic("IDLE event for \(serverId)/\(mailbox): \(eventDescription)")
                     await activityTracker.markActivity()
 
                     switch event {
                     case .exists(let count):
-                        Self.stderr("IDLE EXISTS for \(serverId)/\(mailbox): count=\(count) lastSeenUID=\(lastSeenUID)")
-                        Self.idleLog("IDLE EXISTS for \(serverId)/\(mailbox): count=\(count) lastSeenUID=\(lastSeenUID)")
-                        Self.idleLog("Fetching new messages after EXISTS for \(serverId)/\(mailbox): minUID=\(lastSeenUID + 1)")
+                        Self.logDiagnostic("IDLE EXISTS for \(serverId)/\(mailbox): count=\(count) lastSeenUID=\(lastSeenUID)")
+                        Self.logDiagnostic("Fetching new messages after EXISTS for \(serverId)/\(mailbox): minUID=\(lastSeenUID + 1)")
                         await activityTracker.beginFetchActivity()
                         let newMessages: [MessageHeader]
                         do {
@@ -426,13 +374,11 @@ public actor PostServer {
                             throw error
                         }
                         await activityTracker.endFetchActivity()
-                        Self.stderr("IDLE delta fetch for \(serverId)/\(mailbox): fetched \(newMessages.count) messages since uid \(lastSeenUID + 1)")
-                        Self.idleLog("IDLE delta fetch for \(serverId)/\(mailbox): fetched \(newMessages.count) messages since uid \(lastSeenUID + 1)")
+                        Self.logDiagnostic("IDLE delta fetch for \(serverId)/\(mailbox): fetched \(newMessages.count) messages since uid \(lastSeenUID + 1)")
                         for msg in newMessages {
                             if msg.uid > lastSeenUID {
                                 lastSeenUID = msg.uid
-                                Self.stderr("New message \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
-                                Self.idleLog("New message \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
+                                Self.logDiagnostic("New message \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
                                 logger.info("New message on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
                                 if let command {
                                     let hookMessage = await Self.fetchHookMessagePayload(using: server, mailbox: mailbox, header: msg)
@@ -441,13 +387,11 @@ public actor PostServer {
                             }
                         }
                     case .expunge(let seq):
-                        Self.stderr("IDLE EXPUNGE for \(serverId)/\(mailbox): seq=\(seq.value)")
-                        Self.idleLog("IDLE EXPUNGE for \(serverId)/\(mailbox): seq=\(seq.value)")
+                        Self.logDiagnostic("IDLE EXPUNGE for \(serverId)/\(mailbox): seq=\(seq.value)")
                         // Sequence numbers can shift; UID-based high-water mark remains safe.
                     case .bye:
-                        Self.stderr("IDLE BYE for \(serverId)/\(mailbox)")
-                        Self.idleLog("IDLE BYE for \(serverId)/\(mailbox)")
-                        Self.idleLog("ERROR IDLE received BYE for \(serverId)/\(mailbox); reconnect requested")
+                        Self.logDiagnostic("IDLE BYE for \(serverId)/\(mailbox)")
+                        Self.logDiagnostic("ERROR IDLE received BYE for \(serverId)/\(mailbox); reconnect requested")
                         logger.warning("IDLE received BYE for \(serverId)/\(mailbox); reconnecting")
                         return
                     default:
@@ -456,12 +400,10 @@ public actor PostServer {
                 }
 
                 // If stream ends, reconnect
-                Self.stderr("IDLE stream ended for \(serverId)/\(mailbox); reconnecting")
-                Self.idleLog("IDLE stream ended for \(serverId)/\(mailbox); reconnecting")
+                Self.logDiagnostic("IDLE stream ended for \(serverId)/\(mailbox); reconnecting")
                 logger.warning("IDLE stream ended for \(serverId)/\(mailbox); reconnecting")
             } catch {
-                Self.stderr("IDLE watch failed for \(serverId)/\(mailbox): \(String(describing: error))")
-                Self.idleLog("ERROR IDLE watch failed for \(serverId)/\(mailbox): \(String(describing: error))")
+                Self.logDiagnostic("ERROR IDLE watch failed for \(serverId)/\(mailbox): \(String(describing: error))")
                 logger.warning("IDLE watch failed for \(serverId)/\(mailbox): \(String(describing: error))")
             }
 
@@ -636,8 +578,7 @@ public actor PostServer {
                 headers: headers
             )
         } catch {
-            Self.stderr("Failed to fetch hook message details for \(mailbox) uid=\(header.uid): \(String(describing: error))")
-            Self.idleLog("ERROR failed to fetch hook message details for \(mailbox) uid=\(header.uid): \(String(describing: error))")
+            Self.logDiagnostic("ERROR failed to fetch hook message details for \(mailbox) uid=\(header.uid): \(String(describing: error))")
         }
 
         return HookMessagePayload(
@@ -696,8 +637,7 @@ public actor PostServer {
                 htmlBody = String(data: data, encoding: .utf8)
             }
         } catch {
-            Self.stderr("Failed to fetch body parts for markdown uid=\(messageInfo.uid?.value ?? 0): \(String(describing: error))")
-            Self.idleLog("ERROR failed to fetch body parts for markdown uid=\(messageInfo.uid?.value ?? 0): \(String(describing: error))")
+            Self.logDiagnostic("ERROR failed to fetch body parts for markdown uid=\(messageInfo.uid?.value ?? 0): \(String(describing: error))")
             return nil
         }
 
@@ -718,8 +658,7 @@ public actor PostServer {
         do {
             return try await detail.markdown()
         } catch {
-            Self.stderr("Failed to convert body to markdown uid=\(messageInfo.uid?.value ?? 0): \(String(describing: error))")
-            Self.idleLog("ERROR failed to convert body to markdown uid=\(messageInfo.uid?.value ?? 0): \(String(describing: error))")
+            Self.logDiagnostic("ERROR failed to convert body to markdown uid=\(messageInfo.uid?.value ?? 0): \(String(describing: error))")
             return textBody
         }
     }
@@ -845,8 +784,7 @@ public actor PostServer {
 
         process.arguments = ["-c", command]
 
-        stderr("Executing hook for \(serverId)/\(mailbox) uid=\(message.uid): \(command)")
-        Self.idleLog("Executing hook command for \(serverId)/\(mailbox) uid=\(message.uid): \(command)")
+        Self.logDiagnostic("Executing hook command for \(serverId)/\(mailbox) uid=\(message.uid): \(command)")
 
         process.terminationHandler = { [serverId, mailbox, uid = message.uid] proc in
             let status = proc.terminationStatus
@@ -860,7 +798,7 @@ public actor PostServer {
                 if !trimmed.isEmpty {
                     for line in trimmed.split(separator: "\n", omittingEmptySubsequences: true) {
                         let logLine = "Hook stdout for \(serverId)/\(mailbox) uid=\(uid): \(line)"
-                        Self.idleLog(logLine)
+                        Self.logDiagnostic(logLine)
                     }
                 }
             }
@@ -870,18 +808,12 @@ public actor PostServer {
                 if !trimmed.isEmpty {
                     for line in trimmed.split(separator: "\n", omittingEmptySubsequences: true) {
                         let logLine = "Hook stderr for \(serverId)/\(mailbox) uid=\(uid): \(line)"
-                        Self.idleLog(logLine)
-                        if let data = ("[postd] \(logLine)\n").data(using: .utf8) {
-                            try? FileHandle.standardError.write(contentsOf: data)
-                        }
+                        Self.logDiagnostic(logLine)
                     }
                 }
             }
 
-            if let data = ("[postd] Hook finished for \(serverId)/\(mailbox) uid=\(uid): status=\(status) reason=\(reason)\n").data(using: .utf8) {
-                try? FileHandle.standardError.write(contentsOf: data)
-            }
-            Self.idleLog("Hook finished for \(serverId)/\(mailbox) uid=\(uid): status=\(status) reason=\(reason)")
+            Self.logDiagnostic("Hook finished for \(serverId)/\(mailbox) uid=\(uid): status=\(status) reason=\(reason)")
         }
 
         do {
@@ -895,8 +827,7 @@ public actor PostServer {
             try stdinPipe.fileHandleForWriting.write(contentsOf: Data([0x0A]))
             try stdinPipe.fileHandleForWriting.close()
         } catch {
-            Self.stderr("Failed to execute hook for \(serverId)/\(mailbox) uid=\(message.uid): \(String(describing: error))")
-            Self.idleLog("ERROR failed to execute hook for \(serverId)/\(mailbox) uid=\(message.uid): \(String(describing: error))")
+            Self.logDiagnostic("ERROR failed to execute hook for \(serverId)/\(mailbox) uid=\(message.uid): \(String(describing: error))")
             try? stdinPipe.fileHandleForWriting.close()
         }
     }
@@ -908,7 +839,7 @@ public actor PostServer {
 
     /// Reloads configuration from disk, restarts IDLE watches and connections.
     public func reloadConfiguration() async {
-        stderr("Reloading configuration...")
+        logger.info("Reloading configuration...")
 
         do {
             let newConfig = try PostConfiguration.load()
@@ -922,19 +853,19 @@ public actor PostServer {
             // Replace connection manager with new config
             connectionManager = IMAPConnectionManager(configuration: newConfig)
 
-            stderr("Configuration reloaded. \(newConfig.servers.count) server(s) configured.")
+            logger.info("Configuration reloaded. \(newConfig.servers.count) server(s) configured.")
 
             // Restart IDLE watches
             await startIdleWatches()
         } catch {
-            stderr("Failed to reload configuration: \(error.localizedDescription)")
+            logger.error("Failed to reload configuration: \(error.localizedDescription)")
         }
     }
 
     private func stopIdleWatches() {
         for (id, task) in idleWatchTasks {
             task.cancel()
-            stderr("Stopped IDLE watch for server=\(id)")
+            logger.info("Stopped IDLE watch for server=\(id)")
         }
         idleWatchTasks.removeAll()
     }
