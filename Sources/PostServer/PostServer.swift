@@ -231,8 +231,18 @@ public actor PostServer {
         return watchConfigurations
     }
 
+    /// Returns the named IMAP connection used for IDLE follow-up commands on a watched mailbox.
+    private static func idleCommandConnection(
+        for server: IMAPServer,
+        serverId: String,
+        mailbox: String
+    ) async throws -> IMAPNamedConnection {
+        let connectionName = "post-idle-\(serverId)-\(mailbox)"
+        return try await server.connection(named: connectionName)
+    }
+
     /// Runs IDLE watch off the actor so the event loop doesn't block MCP requests.
-    /// Uses the shared IMAPServer instance (which manages its own IDLE connections internally).
+    /// Uses server-managed connections: one resilient IDLE stream + one named command connection.
     private static func runIdleWatch(
         serverId: String,
         mailbox: String,
@@ -246,28 +256,18 @@ public actor PostServer {
                 // Get connection inside the detached task (async call to actor)
                 Self.logDiagnostic("runIdleWatch: getting connection for \(serverId)")
                 let server = try await connectionManager.connection(for: serverId)
+                let commandConnection = try await Self.idleCommandConnection(for: server, serverId: serverId, mailbox: mailbox)
                 let activityTracker = IdleWatchActivityTracker()
                 Self.logDiagnostic("runIdleWatch: got connection for \(serverId)")
 
                 Self.logDiagnostic("runIdleWatch loop starting for \(serverId)/\(mailbox)")
 
-                // Baseline: Get current max UID using primary connection
+                // Baseline: determine the current max UID on the named command connection.
                 var lastSeenUID: Int = 0
                 do {
-                    // Fetch latest 1 message to get the highest UID
-                    // Use fetchMessageInfos with limit to avoid fetching all headers
-                    // Note: fetchMessageInfos(uidRange:) requires a range.
-                    // We need to list messages or status to find the latest.
-                    // Let's use mailboxStatus to get uidNext or highestModSeq?
-                    // Or just use listMessages from the server (which uses primary connection)
-                    
-                    // Since we are static, we call IMAPServer methods directly.
-                    // We need to know the UIDNext or search for *
-                    // Actually, let's just use selectMailbox to get the status, which often includes UIDs
-                    
-                    let status = try await server.selectMailbox(mailbox)
+                    let status = try await commandConnection.selectMailbox(mailbox)
                     if let latest = status.latest(1) {
-                        let infos = try await server.fetchMessageInfosBulk(using: latest)
+                        let infos = try await commandConnection.fetchMessageInfosBulk(using: latest)
                         if let uid = infos.first?.uid {
                             lastSeenUID = Int(uid.value)
                         }
@@ -301,13 +301,13 @@ public actor PostServer {
                         }
 
                         do {
-                            _ = try await server.noop()
+                            _ = try await commandConnection.noop()
                             await activityTracker.markActivity()
                             let inactivity = Int(snapshot.seconds.rounded())
-                            let message = "Primary heartbeat NOOP succeeded for \(serverId)/\(mailbox) after \(inactivity)s inactivity"
+                            let message = "Named heartbeat NOOP succeeded for \(serverId)/\(mailbox) after \(inactivity)s inactivity"
                             Self.logDiagnostic(message)
                         } catch {
-                            Self.logDiagnostic("ERROR primary heartbeat NOOP failed for \(serverId)/\(mailbox): \(String(describing: error))")
+                            Self.logDiagnostic("ERROR named heartbeat NOOP failed for \(serverId)/\(mailbox): \(String(describing: error))")
                         }
                     }
                 }
@@ -333,7 +333,7 @@ public actor PostServer {
                     await activityTracker.beginFetchActivity()
                     let caughtUp: [MessageHeader]
                     do {
-                        caughtUp = try await Self.fetchNewMessages(using: server, mailbox: mailbox, minUID: catchUpMinUID)
+                        caughtUp = try await Self.fetchNewMessages(using: commandConnection, mailbox: mailbox, minUID: catchUpMinUID)
                     } catch {
                         await activityTracker.endFetchActivity()
                         throw error
@@ -353,7 +353,7 @@ public actor PostServer {
                             Self.logDiagnostic("New message (catch-up) \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
                             logger.info("New message (catch-up) on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
                             if let command {
-                                let hookMessage = await Self.fetchHookMessagePayload(using: server, mailbox: mailbox, header: msg)
+                                let hookMessage = await Self.fetchHookMessagePayload(using: commandConnection, mailbox: mailbox, header: msg)
                                 Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: hookMessage)
                             }
                         } else {
@@ -365,7 +365,7 @@ public actor PostServer {
                     logger.warning("Catch-up fetch failed for \(serverId)/\(mailbox): \(String(describing: error))")
                 }
 
-                for await event in idleSession.events {
+                eventLoop: for await event in idleSession.events {
                     if Task.isCancelled { break }
 
                     // Log every IDLE event for diagnostics.
@@ -380,7 +380,7 @@ public actor PostServer {
                         await activityTracker.beginFetchActivity()
                         let newMessages: [MessageHeader]
                         do {
-                            newMessages = try await Self.fetchNewMessages(using: server, mailbox: mailbox, minUID: lastSeenUID + 1)
+                            newMessages = try await Self.fetchNewMessages(using: commandConnection, mailbox: mailbox, minUID: lastSeenUID + 1)
                         } catch {
                             await activityTracker.endFetchActivity()
                             throw error
@@ -393,7 +393,7 @@ public actor PostServer {
                                 Self.logDiagnostic("New message \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
                                 logger.info("New message on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
                                 if let command {
-                                    let hookMessage = await Self.fetchHookMessagePayload(using: server, mailbox: mailbox, header: msg)
+                                    let hookMessage = await Self.fetchHookMessagePayload(using: commandConnection, mailbox: mailbox, header: msg)
                                     Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: hookMessage)
                                 }
                             }
@@ -405,7 +405,7 @@ public actor PostServer {
                         Self.logDiagnostic("IDLE BYE for \(serverId)/\(mailbox)")
                         Self.logDiagnostic("ERROR IDLE received BYE for \(serverId)/\(mailbox); reconnect requested")
                         logger.warning("IDLE received BYE for \(serverId)/\(mailbox); reconnecting")
-                        return
+                        break eventLoop
                     default:
                         break
                     }
@@ -455,11 +455,11 @@ public actor PostServer {
         }
     }
 
-    /// Fetches new messages using a dedicated IDLE connection (no actor hop).
-    private static func fetchNewMessages(using server: IMAPServer, mailbox: String, minUID: Int) async throws -> [MessageHeader] {
-        _ = try await server.selectMailbox(mailbox)
+    /// Fetches new messages using the IDLE watch's named command connection.
+    private static func fetchNewMessages(using connection: IMAPNamedConnection, mailbox: String, minUID: Int) async throws -> [MessageHeader] {
+        _ = try await connection.selectMailbox(mailbox)
         let safeMinUID = max(1, minUID)
-        let infos = try await server.fetchMessageInfos(uidRange: UID(safeMinUID)...)
+        let infos = try await connection.fetchMessageInfos(uidRange: UID(safeMinUID)...)
         return infos.compactMap { info -> MessageHeader? in
             let uidInt = Int(info.uid?.value ?? 0)
             guard uidInt > 0, uidInt >= minUID else { return nil }
@@ -511,7 +511,7 @@ public actor PostServer {
 
     /// Fetches all hook-relevant message fields (headers, markdown body, attachment names).
     private static func fetchHookMessagePayload(
-        using server: IMAPServer,
+        using connection: IMAPNamedConnection,
         mailbox: String,
         header: MessageHeader
     ) async -> HookMessagePayload {
@@ -531,9 +531,9 @@ public actor PostServer {
         }
 
         do {
-            _ = try await server.selectMailbox(mailbox)
+            _ = try await connection.selectMailbox(mailbox)
             let identifier = UID(UInt32(header.uid))
-            guard let messageInfo = try await server.fetchMessageInfo(for: identifier) else {
+            guard let messageInfo = try await connection.fetchMessageInfo(for: identifier) else {
                 return HookMessagePayload(
                     uid: header.uid,
                     mailbox: mailbox,
@@ -548,7 +548,7 @@ public actor PostServer {
                 )
             }
 
-            let markdown = await fetchHookMarkdown(using: server, messageInfo: messageInfo)
+            let markdown = await fetchHookMarkdown(using: connection, messageInfo: messageInfo)
             let decodedAdditionalHeaders = decodeAdditionalHeaders(messageInfo.additionalFields)
             let replyTo = extractReplyTo(from: decodedAdditionalHeaders)
             let decodedFrom = decodeHeaderValue(messageInfo.from ?? header.from)
@@ -624,7 +624,7 @@ public actor PostServer {
     }
 
     /// Produces markdown by fetching only text/html body parts (no attachment download).
-    private static func fetchHookMarkdown(using server: IMAPServer, messageInfo: MessageInfo) async -> String? {
+    private static func fetchHookMarkdown(using connection: IMAPNamedConnection, messageInfo: MessageInfo) async -> String? {
         let textPart = messageInfo.parts.first { part in
             part.contentType.lowercased().hasPrefix("text/plain")
                 && part.disposition?.lowercased() != "attachment"
@@ -640,12 +640,20 @@ public actor PostServer {
 
         do {
             if let textPart {
-                let data = try await server.fetchAndDecodeMessagePartData(messageInfo: messageInfo, part: textPart)
+                let data = try await fetchAndDecodePartData(
+                    using: connection,
+                    messageInfo: messageInfo,
+                    part: textPart
+                )
                 textBody = String(data: data, encoding: .utf8)
             }
 
             if let htmlPart {
-                let data = try await server.fetchAndDecodeMessagePartData(messageInfo: messageInfo, part: htmlPart)
+                let data = try await fetchAndDecodePartData(
+                    using: connection,
+                    messageInfo: messageInfo,
+                    part: htmlPart
+                )
                 htmlBody = String(data: data, encoding: .utf8)
             }
         } catch {
@@ -673,6 +681,18 @@ public actor PostServer {
             Self.logDiagnostic("ERROR failed to convert body to markdown uid=\(messageInfo.uid?.value ?? 0): \(String(describing: error))")
             return textBody
         }
+    }
+
+    private static func fetchAndDecodePartData(
+        using connection: IMAPNamedConnection,
+        messageInfo: MessageInfo,
+        part: MessagePart
+    ) async throws -> Data {
+        if let uid = messageInfo.uid {
+            return try await connection.fetchPart(section: part.section, of: uid).decoded(for: part)
+        }
+
+        return try await connection.fetchPart(section: part.section, of: messageInfo.sequenceNumber).decoded(for: part)
     }
 
     /// Extracts Reply-To header value from normalized (lowercase) decoded header fields.

@@ -2,25 +2,25 @@ import XCTest
 @testable import post
 
 final class DraftMarkdownEscapingTests: XCTestCase {
-    func testMarkdownOptionUnescapesCommonSequences() throws {
+    func testBodyOptionUnescapesCommonSequences() throws {
         let parsed = try PostCLI.Draft.parse([
             "--from", "from@example.com",
             "--to", "to@example.com",
             "--subject", "Subject",
-            "--markdown", "A\\nB\\rC\\tD\\\\E\\\"F\\'G"
+            "--body", "A\\nB\\rC\\tD\\\\E\\\"F\\'G"
         ])
 
-        XCTAssertEqual(parsed.markdown, "A\nB\rC\tD\\E\"F'G")
+        XCTAssertEqual(parsed.body, "A\nB\rC\tD\\E\"F'G")
     }
 
-    func testMarkdownOptionPreservesEscapedBackslashBeforeN() throws {
+    func testBodyOptionPreservesEscapedBackslashBeforeN() throws {
         let parsed = try PostCLI.Draft.parse([
             "--from", "from@example.com",
             "--to", "to@example.com",
             "--subject", "Subject",
-            "--markdown", "\\\\n"
+            "--body", "\\\\n"
         ])
 
-        XCTAssertEqual(parsed.markdown, "\\n")
+        XCTAssertEqual(parsed.body, "\\n")
     }
 }
