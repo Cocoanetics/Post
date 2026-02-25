@@ -321,23 +321,35 @@ public actor PostServer {
                     }
                 }
 
-                // Catch any messages that arrived during setup (between baseline and IDLE start)
+                // Catch any messages that arrived during setup (between baseline and IDLE start),
+                // including the baseline UID itself so restart does not skip it.
                 do {
-                    Self.logDiagnostic("IDLE catch-up fetch for \(serverId)/\(mailbox): minUID=\(lastSeenUID + 1)")
+                    let baselineUID = lastSeenUID
+                    let catchUpMinUID = baselineUID > 0 ? baselineUID : 1
+                    var baselineMessagePending = baselineUID > 0
+                    Self.logDiagnostic(
+                        "IDLE catch-up fetch for \(serverId)/\(mailbox): minUID=\(catchUpMinUID) (inclusive baseline UID=\(baselineUID))"
+                    )
                     await activityTracker.beginFetchActivity()
                     let caughtUp: [MessageHeader]
                     do {
-                        caughtUp = try await Self.fetchNewMessages(using: server, mailbox: mailbox, minUID: lastSeenUID + 1)
+                        caughtUp = try await Self.fetchNewMessages(using: server, mailbox: mailbox, minUID: catchUpMinUID)
                     } catch {
                         await activityTracker.endFetchActivity()
                         throw error
                     }
                     await activityTracker.endFetchActivity()
-                    Self.logDiagnostic("IDLE catch-up for \(serverId)/\(mailbox): fetched \(caughtUp.count) messages since uid \(lastSeenUID + 1)")
+                    Self.logDiagnostic("IDLE catch-up for \(serverId)/\(mailbox): fetched \(caughtUp.count) messages since uid \(catchUpMinUID)")
                     for msg in caughtUp {
                         Self.logDiagnostic("IDLE catch-up examining message uid=\(msg.uid) vs lastSeenUID=\(lastSeenUID)")
-                        if msg.uid > lastSeenUID {
-                            lastSeenUID = msg.uid
+                        let isBaselineMessage = baselineMessagePending && msg.uid == baselineUID
+                        if msg.uid > lastSeenUID || isBaselineMessage {
+                            if isBaselineMessage {
+                                baselineMessagePending = false
+                                Self.logDiagnostic("IDLE catch-up including baseline message for \(serverId)/\(mailbox): uid=\(msg.uid)")
+                                logger.info("IDLE catch-up including baseline message on \(serverId)/\(mailbox): uid=\(msg.uid)")
+                            }
+                            lastSeenUID = max(lastSeenUID, msg.uid)
                             Self.logDiagnostic("New message (catch-up) \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
                             logger.info("New message (catch-up) on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
                             if let command {
