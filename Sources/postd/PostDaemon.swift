@@ -71,6 +71,19 @@ extension PostDaemon {
             let server = PostServer(configuration: configuration)
             var transports: [any Transport] = []
 
+            do {
+                let keyCount = try await server.primeAPIKeyScopes()
+                daemonLogger.info("API key scopes authorized and loaded (\(keyCount) key(s)).")
+            } catch {
+                daemonLogger.error("Failed to authorize API key scopes at startup: \(String(describing: error))")
+                throw ValidationError(
+                    """
+                    Unable to access API key scopes in Keychain. Authorize postd for "Post API Keys" and start again.
+                    Underlying error: \(error.localizedDescription)
+                    """
+                )
+            }
+
             let tcpTransport = TCPBonjourTransport(server: server, serviceName: PostServer.Client.serverName)
             transports.append(tcpTransport)
 

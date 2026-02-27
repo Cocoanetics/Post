@@ -22,6 +22,9 @@ public enum PostServerError: Error, LocalizedError, Sendable {
     case noGlobMatches(String)
     case unsupportedPlatform(String)
     case noSession
+    case apiKeyRequired
+    case invalidAPIKey
+    case serverAccessDenied(serverId: String)
 
     public var errorDescription: String? {
         switch self {
@@ -57,6 +60,12 @@ public enum PostServerError: Error, LocalizedError, Sendable {
             return reason
         case .noSession:
             return "No active MCP session."
+        case .apiKeyRequired:
+            return "API key is required."
+        case .invalidAPIKey:
+            return "Invalid API key."
+        case .serverAccessDenied(let serverId):
+            return "API key is not authorized for server '\(serverId)'."
         }
     }
 }
@@ -135,6 +144,10 @@ public actor PostServer {
     }
 
     private var connectionManager: IMAPConnectionManager
+    private let apiKeyStore = APIKeyStore()
+    private var scopedServerIDsByToken: [String: Set<String>] = [:]
+    private var apiKeyScopesPrimed = false
+    private var apiKeyRequiredForMCP = false
     private let logger = Logger(label: "com.cocoanetics.Post.PostServer")
 
     private var idleWatchTasks: [String: Task<Void, Never>] = [:]
@@ -179,6 +192,24 @@ public actor PostServer {
 
     public init(configuration: PostConfiguration) {
         self.connectionManager = IMAPConnectionManager(configuration: configuration)
+    }
+
+    /// Preloads all API key scopes from Keychain into memory.
+    /// This is useful at daemon startup to trigger a single keychain authorization prompt.
+    /// - Returns: Number of API keys loaded
+    public func primeAPIKeyScopes() throws -> Int {
+        let records = try apiKeyStore.listKeys()
+        var mapping: [String: Set<String>] = [:]
+        mapping.reserveCapacity(records.count)
+
+        for record in records {
+            mapping[record.token] = Set(record.allowedServerIDs)
+        }
+
+        scopedServerIDsByToken = mapping
+        apiKeyScopesPrimed = true
+        apiKeyRequiredForMCP = !records.isEmpty
+        return records.count
     }
 
     /// Starts configured IMAP IDLE watches (dedicated connections via SwiftMail) for servers
@@ -884,6 +915,12 @@ public actor PostServer {
 
             // Replace connection manager with new config
             connectionManager = IMAPConnectionManager(configuration: newConfig)
+            do {
+                let keyCount = try primeAPIKeyScopes()
+                logger.info("API key scopes refreshed (\(keyCount) key(s)).")
+            } catch {
+                logger.error("Failed to refresh API key scopes: \(error.localizedDescription)")
+            }
 
             logger.info("Configuration reloaded. \(newConfig.servers.count) server(s) configured.")
 
@@ -904,8 +941,12 @@ public actor PostServer {
 
     /// Lists all configured IMAP servers with IDs and resolved connection info.
     @MCPTool
-    public func listServers() async -> [ServerInfo] {
-        await connectionManager.serverInfos()
+    public func listServers() async throws -> [ServerInfo] {
+        let infos = await connectionManager.serverInfos()
+        guard let allowed = try await allowedServerIDsForCurrentSession() else {
+            return infos
+        }
+        return infos.filter { allowed.contains($0.id) }
     }
 
     /// Lists emails in a mailbox on the specified server
@@ -1459,7 +1500,11 @@ public actor PostServer {
             throw PostServerError.noSession
         }
 
-        let watchConfigurations = await configuredIdleWatches()
+        let allowedServerIDs = try await allowedServerIDsForCurrentSession()
+        let watchConfigurations = await configuredIdleWatches().filter { config in
+            guard let allowedServerIDs else { return true }
+            return allowedServerIDs.contains(config.serverId)
+        }
         guard !watchConfigurations.isEmpty else {
             throw PostServerError.noIdleEnabledServers
         }
@@ -1691,6 +1736,8 @@ public actor PostServer {
     }
 
     private func withServer<T>(serverId: String, operation: (IMAPServer) async throws -> T) async throws -> T {
+        try await assertServerAccessAllowed(serverId)
+
         do {
             let server = try await connectionManager.connection(for: serverId)
             return try await operation(server)
@@ -1717,6 +1764,47 @@ public actor PostServer {
 
         let message = String(describing: error).lowercased()
         return message.contains("connection") || message.contains("broken pipe") || message.contains("not connected")
+    }
+
+    private func assertServerAccessAllowed(_ serverId: String) async throws {
+        guard let allowedServerIDs = try await allowedServerIDsForCurrentSession() else {
+            return
+        }
+
+        guard allowedServerIDs.contains(serverId) else {
+            throw PostServerError.serverAccessDenied(serverId: serverId)
+        }
+    }
+
+    private func allowedServerIDsForCurrentSession() async throws -> Set<String>? {
+        guard let session = Session.current else {
+            return nil
+        }
+
+        guard let accessToken = await session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !accessToken.isEmpty else {
+            if apiKeyRequiredForMCP {
+                throw PostServerError.apiKeyRequired
+            }
+            return nil
+        }
+
+        if let cached = scopedServerIDsByToken[accessToken] {
+            return cached
+        }
+
+        // If startup preflight already loaded all known keys, a cache miss means invalid key.
+        if apiKeyScopesPrimed {
+            throw PostServerError.invalidAPIKey
+        }
+
+        guard let allowedServerIDs = try apiKeyStore.allowedServerIDs(forToken: accessToken) else {
+            throw PostServerError.invalidAPIKey
+        }
+
+        let allowedSet = Set(allowedServerIDs)
+        scopedServerIDsByToken[accessToken] = allowedSet
+        return allowedSet
     }
 
     private func fetchAdditionalHeaders(for message: Message, using server: IMAPServer) async -> [String: String]? {

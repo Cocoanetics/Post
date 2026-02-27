@@ -62,10 +62,22 @@ private final class IdleEventLogger: MCPServerProxyLogNotificationHandling, @unc
 
 @main
 struct PostCLI: AsyncParsableCommand {
+    private static var apiKeyCommandVisible: Bool {
+        guard let value = ProcessInfo.processInfo.environment["POST_API_KEY"] else {
+            return true
+        }
+        return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? false
+            : true
+    }
+
     static let configuration = CommandConfiguration(
         commandName: "post",
         abstract: "Post CLI client",
-        subcommands: [
+        subcommands: operationalSubcommands + (apiKeyCommandVisible ? configurationSubcommands : []),
+    )
+
+    private static let operationalSubcommands: [ParsableCommand.Type] = [
             Servers.self,
             List.self,
             Fetch.self,
@@ -85,16 +97,23 @@ struct PostCLI: AsyncParsableCommand {
             Draft.self,
             Reply.self,
             PDF.self,
-            Idle.self,
-            Credential.self
+            Idle.self
         ]
-    )
+
+    private static let configurationSubcommands: [ParsableCommand.Type] = [
+            Credential.self,
+            APIKey.self
+        ]
+    
 }
 
 extension PostCLI {
     struct GlobalOptions: ParsableArguments {
         @ArgumentParser.Flag(name: .long, help: "Output as JSON")
         var json: Bool = false
+
+        @Option(name: .long, help: "Scoped API key token (overrides POST_API_KEY and .env)")
+        var token: String?
     }
 
     struct Servers: AsyncParsableCommand {
@@ -1195,9 +1214,15 @@ extension PostCLI {
     struct Idle: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Watch IMAP IDLE events in real time (debug tool)")
 
+        @Option(name: .long, help: "Scoped API key token (overrides POST_API_KEY and .env)")
+        var token: String?
+
         func run() async throws {
             let tcpConfig = MCPServerTcpConfig(serviceName: PostProxy.serverName)
             let proxy = MCPServerProxy(config: .tcp(config: tcpConfig))
+            if let token = resolveAPIToken() {
+                await proxy.setAccessTokenMeta(token)
+            }
 
             await proxy.setLogNotificationHandler(IdleEventLogger())
 
@@ -1360,6 +1385,85 @@ extension PostCLI {
         }
 
     }
+
+    struct APIKey: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "api-key",
+            abstract: "Manage scoped API keys for MCP access",
+            subcommands: [Create.self, List.self, Delete.self]
+        )
+
+        struct Create: ParsableCommand {
+            static let configuration = CommandConfiguration(abstract: "Create an API key scoped to selected servers")
+
+            @Option(name: .long, help: "Allowed server IDs (comma-separated)")
+            var servers: String
+
+            func run() throws {
+                #if canImport(Security)
+                let serverIDs = servers
+                    .split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+
+                guard !serverIDs.isEmpty else {
+                    throw ValidationError("At least one server ID is required.")
+                }
+
+                let store = APIKeyStore()
+                let record = try store.createKey(allowedServerIDs: serverIDs)
+                print("API key: \(record.token)")
+                print("Allowed servers: \(record.allowedServerIDs.joined(separator: ", "))")
+                #else
+                print("API key management is not available on this platform.")
+                throw ExitCode.failure
+                #endif
+            }
+        }
+
+        struct List: ParsableCommand {
+            static let configuration = CommandConfiguration(abstract: "List stored API keys")
+
+            func run() throws {
+                #if canImport(Security)
+                let store = APIKeyStore()
+                let keys = try store.listKeys()
+
+                if keys.isEmpty {
+                    print("No API keys stored.")
+                    return
+                }
+
+                for key in keys {
+                    let iso = ISO8601DateFormatter().string(from: key.createdAt)
+                    let servers = key.allowedServerIDs.joined(separator: ", ")
+                    print("\(key.token)  \(iso)  [\(servers)]")
+                }
+                #else
+                print("API key management is not available on this platform.")
+                throw ExitCode.failure
+                #endif
+            }
+        }
+
+        struct Delete: ParsableCommand {
+            static let configuration = CommandConfiguration(abstract: "Delete a stored API key")
+
+            @Option(name: .long, help: "API key token (UUID)")
+            var token: String
+
+            func run() throws {
+                #if canImport(Security)
+                let store = APIKeyStore()
+                try store.delete(token: token)
+                print("API key deleted.")
+                #else
+                print("API key management is not available on this platform.")
+                throw ExitCode.failure
+                #endif
+            }
+        }
+    }
 }
 
 /// Reads a password from stdin with echo disabled.
@@ -1505,6 +1609,9 @@ private func withClient<T>(quiet: Bool = false, _ operation: (PostProxy) async t
 
     let tcpConfig = MCPServerTcpConfig(serviceName: PostProxy.serverName)
     let proxy = MCPServerProxy(config: .tcp(config: tcpConfig))
+    if let token = resolveAPIToken() {
+        await proxy.setAccessTokenMeta(token)
+    }
     try await proxy.connect()
 
     if quiet {
@@ -1519,6 +1626,88 @@ private func withClient<T>(quiet: Bool = false, _ operation: (PostProxy) async t
 
     let client = PostProxy(proxy: proxy)
     return try await operation(client)
+}
+
+private func resolveAPIToken() -> String? {
+    if let token = commandLineToken(), !token.isEmpty {
+        return token
+    }
+
+    if let envToken = ProcessInfo.processInfo.environment["POST_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !envToken.isEmpty {
+        return envToken
+    }
+
+    if let dotEnvToken = loadDotEnvValue(named: "POST_API_KEY"), !dotEnvToken.isEmpty {
+        return dotEnvToken
+    }
+
+    return nil
+}
+
+private func commandLineToken() -> String? {
+    let args = CommandLine.arguments
+
+    for (index, arg) in args.enumerated() {
+        if arg == "--token", args.indices.contains(index + 1) {
+            return args[index + 1].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        if arg.hasPrefix("--token=") {
+            let value = String(arg.dropFirst("--token=".count))
+            return value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
+    return nil
+}
+
+private func loadDotEnvValue(named key: String) -> String? {
+    let envURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".env")
+    guard let raw = try? String(contentsOf: envURL, encoding: .utf8) else {
+        return nil
+    }
+
+    for line in raw.components(separatedBy: .newlines) {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed.hasPrefix("#") {
+            continue
+        }
+
+        let withoutExport: String
+        if trimmed.hasPrefix("export ") {
+            withoutExport = String(trimmed.dropFirst("export ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            withoutExport = trimmed
+        }
+
+        guard let separatorIndex = withoutExport.firstIndex(of: "=") else {
+            continue
+        }
+
+        let name = withoutExport[..<separatorIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard name == key else {
+            continue
+        }
+
+        var value = withoutExport[withoutExport.index(after: separatorIndex)...].trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 {
+            value.removeFirst()
+            value.removeLast()
+        } else if value.hasPrefix("'"), value.hasSuffix("'"), value.count >= 2 {
+            value.removeFirst()
+            value.removeLast()
+        }
+        return value
+    }
+
+    return nil
+}
+
+private extension MCPServerProxy {
+    func setAccessTokenMeta(_ token: String) {
+        meta["accessToken"] = AnyCodable(token)
+    }
 }
 
 private func outputJSON<T: Encodable>(_ value: T) {
