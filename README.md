@@ -50,7 +50,8 @@ post draft --to colleague@example.com --subject "Update" --body email.md
 The daemon holds all IMAP connections. Both the CLI and AI agents talk to the daemon — never directly to mail servers. This means:
 
 - **Single connection pool** — no duplicate IMAP sessions
-- **Instant discovery** — CLI finds the daemon via Bonjour, zero config
+- **Local-only by default** — daemon accepts connections from localhost only (secure by default)
+- **Instant discovery** — CLI finds the daemon via Bonjour on the local machine
 - **Always up-to-date** — IDLE keeps mailbox state fresh
 - **Trigger scripts** — run custom commands when new mail arrives
 
