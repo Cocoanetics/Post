@@ -153,7 +153,7 @@ public actor PostServer {
     private var idleWatchTasks: [String: Task<Void, Never>] = [:]
     private static let idleDiagnosticLogger = Logger(label: "com.cocoanetics.Post.IDLE.Diagnostics")
     private static let idleHeartbeatCheckIntervalNanoseconds: UInt64 = 60_000_000_000
-    private static let idleHeartbeatInactivityThresholdSeconds: TimeInterval = 1_500
+    private static let idleHeartbeatInactivityThresholdSeconds: TimeInterval = 900
 
     private actor IdleWatchActivityTracker {
         private var lastActivityAt = Date()
