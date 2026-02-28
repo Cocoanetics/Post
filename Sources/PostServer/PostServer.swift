@@ -709,7 +709,28 @@ public actor PostServer {
         do {
             return try await detail.markdown()
         } catch {
-            Self.logDiagnostic("ERROR failed to convert body to markdown uid=\(messageInfo.uid?.value ?? 0): \(String(describing: error))")
+            let uid = messageInfo.uid?.value ?? 0
+            Self.logDiagnostic("ERROR failed to convert body to markdown uid=\(uid): \(String(describing: error))")
+            
+            // Preserve offending HTML for debugging
+            if let htmlBody = htmlBody, !htmlBody.isEmpty {
+                let debugDir = FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent("clawd/mail-room/log/markdown-failures")
+                
+                do {
+                    try FileManager.default.createDirectory(at: debugDir, withIntermediateDirectories: true)
+                    
+                    let timestamp = ISO8601DateFormatter().string(from: Date())
+                    let filename = "uid-\(uid)-\(timestamp).html"
+                    let debugFile = debugDir.appendingPathComponent(filename)
+                    
+                    try htmlBody.write(to: debugFile, atomically: true, encoding: .utf8)
+                    Self.logDiagnostic("Saved problematic HTML to \(debugFile.path)")
+                } catch {
+                    Self.logDiagnostic("ERROR failed to save debug HTML: \(String(describing: error))")
+                }
+            }
+            
             return textBody
         }
     }
