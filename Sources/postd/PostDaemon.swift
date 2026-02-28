@@ -43,7 +43,9 @@ extension PostDaemon {
 
             let logURL = Self.daemonLogURL
             try? FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            if !FileManager.default.fileExists(atPath: logURL.path) {
+                FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            }
             let logHandle = try? FileHandle(forWritingTo: logURL)
             _ = try? logHandle?.seekToEnd()
 
