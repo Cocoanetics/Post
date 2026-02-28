@@ -345,10 +345,17 @@ extension PostCLI {
     }
 
     struct EML: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Parse a local .eml file and output as markdown")
+        static let configuration = CommandConfiguration(abstract: "Parse a local .eml file and output body")
+
+        enum BodyFormat: String, ExpressibleByArgument {
+            case text, html, markdown
+        }
 
         @Argument(help: "Path to the .eml file")
         var file: String
+
+        @Option(name: .long, help: "Body format: text, html, or markdown (default: markdown)")
+        var body: BodyFormat = .markdown
 
         @OptionGroup
         var globals: GlobalOptions
@@ -388,8 +395,16 @@ extension PostCLI {
                 additionalHeaders: [:]
             )
             
-            // Convert to markdown
-            let markdown = try await detail.markdown()
+            // Format body according to option
+            let formattedBody: String
+            switch body {
+            case .text:
+                formattedBody = detail.textBody ?? ""
+            case .html:
+                formattedBody = detail.htmlBody ?? detail.textBody ?? ""
+            case .markdown:
+                formattedBody = try await detail.markdown()
+            }
             
             if globals.json {
                 struct EMLOutput: Codable {
@@ -397,7 +412,7 @@ extension PostCLI {
                     let to: [String]
                     let subject: String
                     let date: String
-                    let markdown: String
+                    let body: String
                 }
                 
                 let output = EMLOutput(
@@ -405,11 +420,11 @@ extension PostCLI {
                     to: detail.to,
                     subject: detail.subject,
                     date: detail.date,
-                    markdown: markdown
+                    body: formattedBody
                 )
                 outputJSON([output])
             } else {
-                print(markdown)
+                print(formattedBody)
             }
         }
     }
