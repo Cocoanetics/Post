@@ -1,5 +1,5 @@
 {
-  "originHash" : "a25bd335c609c979bb184d03a4bde675e5d336674c3c8ee03ac9fb835f368cb8",
+  "originHash" : "2c2ea72ed41b2c133ccd6408cf93a8d058c3325d1df19f7f06200974bfcb1bd7",
   "pins" : [
     {
       "identity" : "anycodable",
@@ -141,8 +141,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftMail",
       "state" : {
-        "branch" : "main",
-        "revision" : "1a319b160cb7b5d01a8f90a2eae34ed2ebeaea18"
+        "revision" : "420097363b339e4761cfcc652059447bc2e05846",
+        "version" : "1.0.4"
       }
     },
     {
@@ -159,8 +159,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftText",
       "state" : {
-        "branch" : "main",
-        "revision" : "09a02476224f41b59407a9ebb94f66151e5596aa"
+        "revision" : "09a02476224f41b59407a9ebb94f66151e5596aa",
+        "version" : "1.0.0"
       }
     },
     {
