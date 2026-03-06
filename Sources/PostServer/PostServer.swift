@@ -304,10 +304,13 @@ public actor PostServer {
 
                 // Catch any messages that arrived during setup (between baseline and IDLE start),
                 // including the baseline UID itself so restart does not skip it.
+                // Skip catch-up entirely when baseline is unknown (0) — we have no reference point,
+                // so fetching all messages would just spam hooks on already-read mail.
+                if lastSeenUID > 0 {
                 do {
                     let baselineUID = lastSeenUID
-                    let catchUpMinUID = baselineUID > 0 ? baselineUID : 1
-                    var baselineMessagePending = baselineUID > 0
+                    let catchUpMinUID = baselineUID
+                    var baselineMessagePending = true
                     Self.logDiagnostic(
                         "IDLE catch-up fetch for \(serverId)/\(mailbox): minUID=\(catchUpMinUID) (inclusive baseline UID=\(baselineUID))"
                     )
@@ -338,6 +341,10 @@ public actor PostServer {
                 } catch {
                     Self.logDiagnostic("ERROR catch-up fetch failed for \(serverId)/\(mailbox): \(String(describing: error))")
                     logger.warning("Catch-up fetch failed for \(serverId)/\(mailbox): \(String(describing: error))")
+                }
+                } else {
+                    Self.logDiagnostic("IDLE catch-up skipped for \(serverId)/\(mailbox): no baseline UID known")
+                    logger.info("IDLE catch-up skipped for \(serverId)/\(mailbox): no baseline UID known")
                 }
 
                 eventLoop: for await event in idleSession.events {
