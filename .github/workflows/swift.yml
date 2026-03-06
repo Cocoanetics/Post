@@ -26,3 +26,19 @@ jobs:
 
       - name: Build (release)
         run: swift build -c release
+
+  build-linux:
+    runs-on: ubuntu-latest
+    container: swift:6.1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Swift version
+        run: swift --version
+
+      - name: Build (debug)
+        run: swift build
+
+      - name: Build (release)
+        run: swift build -c release
