@@ -1723,20 +1723,6 @@ public actor PostServer {
 
     /// Converts HTML to plain text for a text/plain MIME alternative.
     private static func htmlToPlainText(_ html: String) -> String {
-        #if canImport(AppKit)
-        if let data = html.data(using: .utf8) {
-            let options: [NSAttributedString.DocumentReadingOptionKey: Any] = [
-                .documentType: NSAttributedString.DocumentType.html,
-                .characterEncoding: String.Encoding.utf8.rawValue
-            ]
-            if let attributed = try? NSAttributedString(data: data, options: options, documentAttributes: nil) {
-                return attributed.string
-                    .replacingOccurrences(of: "\u{00A0}", with: " ")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-        }
-        #endif
-
         var text = html.replacingOccurrences(of: "(?i)<br\\s*/?>", with: "\n", options: .regularExpression)
         text = text.replacingOccurrences(of: "(?i)</?(p|div|h[1-6]|li|tr|table|ul|ol|blockquote|pre)\\b[^>]*>", with: "\n", options: .regularExpression)
         text = text.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
