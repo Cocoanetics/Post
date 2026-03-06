@@ -112,6 +112,7 @@ public actor PostServer {
         let date: Date
         let subject: String
         let markdown: String?
+        let flags: [String]
         let attachments: [HookAttachmentPayload]
         let headers: [String: String]
 
@@ -122,6 +123,7 @@ public actor PostServer {
             case date
             case subject
             case markdown
+            case flags
             case headers
         }
 
@@ -133,6 +135,7 @@ public actor PostServer {
             try container.encode(date, forKey: .date)
             try container.encode(subject, forKey: .subject)
             try container.encode(markdown ?? "", forKey: .markdown)
+            try container.encode(flags, forKey: .flags)
             try container.encode(headers, forKey: .headers)
         }
     }
@@ -543,9 +546,22 @@ public actor PostServer {
             date: resolvedDate,
             subject: decodedSubject,
             markdown: markdown,
+            flags: messageInfo.flags.map(Self.flagToString),
             attachments: attachments,
             headers: headers
         )
+    }
+
+    /// Converts a SwiftMail Flag to its string representation.
+    private static func flagToString(_ flag: Flag) -> String {
+        switch flag {
+        case .seen: return "\\Seen"
+        case .answered: return "\\Answered"
+        case .flagged: return "\\Flagged"
+        case .deleted: return "\\Deleted"
+        case .draft: return "\\Draft"
+        case .custom(let value): return value
+        }
     }
 
     /// Fetches all hook-relevant message fields (headers, markdown body, attachment names).
@@ -565,6 +581,7 @@ public actor PostServer {
                 date: resolveHookDate(messageDate: nil, headerDate: header.date),
                 subject: decodeHeaderValue(header.subject),
                 markdown: nil,
+                flags: [],
                 attachments: [],
                 headers: [:]
             )
@@ -583,6 +600,7 @@ public actor PostServer {
                     date: resolveHookDate(messageDate: nil, headerDate: header.date),
                     subject: decodeHeaderValue(header.subject),
                     markdown: nil,
+                    flags: [],
                     attachments: [],
                     headers: [:]
                 )
@@ -626,6 +644,7 @@ public actor PostServer {
                 date: resolvedDate,
                 subject: decodedSubject,
                 markdown: markdown,
+                flags: messageInfo.flags.map(Self.flagToString),
                 attachments: attachments,
                 headers: headers
             )
@@ -642,6 +661,7 @@ public actor PostServer {
             date: resolveHookDate(messageDate: nil, headerDate: header.date),
             subject: decodeHeaderValue(header.subject),
             markdown: nil,
+            flags: [],
             attachments: [],
             headers: [:]
         )
