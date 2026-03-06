@@ -263,18 +263,26 @@ extension PostCLI {
                     throw ValidationError("Invalid UID set '\(uid)'. Use comma-separated values or ranges (e.g. 1-3,5,10-20).")
                 }
 
+                let outURL: URL? = output.map { URL(fileURLWithPath: $0) }
+                let isExplicitFile = outURL?.pathExtension.count ?? 0 > 0
+                let uidArray = uidSet.toArray()
+
+                if isExplicitFile && uidArray.count > 1 {
+                    throw ValidationError("Cannot use a filename for --output when exporting multiple UIDs. Use a directory instead.")
+                }
+
                 let outputDir: URL?
-                if let output, eml || !globals.json {
-                    let directory = URL(fileURLWithPath: output, isDirectory: true)
-                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                    outputDir = directory
+                if let outURL, eml || !globals.json {
+                    let dir = isExplicitFile ? outURL.deletingLastPathComponent() : outURL
+                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    outputDir = dir
                 } else {
                     outputDir = nil
                 }
 
                 var jsonMessages: [FormattedMessage] = []
                 var foundCount = 0
-                for messageUID in uidSet.toArray() {
+                for messageUID in uidArray {
                     let uidValue = Int(messageUID.value)
 
                     if eml {
@@ -285,10 +293,15 @@ extension PostCLI {
                         let emlData = try await client.downloadEml(serverId: serverId, uid: uidValue, mailbox: mailbox)
                         guard !emlData.isEmpty else { continue }
                         foundCount += 1
-                        let filename = "\(uidValue).eml"
-                        let destination = outputDir.appendingPathComponent(filename)
+                        let destination: URL
+                        if isExplicitFile, let outURL {
+                            destination = outURL
+                        } else {
+                            destination = outputDir.appendingPathComponent("\(uidValue).eml")
+                        }
+                        let displayName = destination.lastPathComponent
                         try emlData.write(to: destination)
-                        print("Saved \(filename) to \(destination.path)")
+                        print("Saved \(displayName) to \(destination.path)")
                         continue
                     }
 
