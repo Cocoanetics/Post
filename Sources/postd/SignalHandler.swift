@@ -1,4 +1,8 @@
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 import Dispatch
 import Foundation
 import Logging
@@ -25,7 +29,7 @@ public final class SignalHandler {
         }
 
         private func install(signal signalValue: Int32, on queue: DispatchQueue) {
-            Darwin.signal(signalValue, SIG_IGN)
+            signal(signalValue, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: signalValue, queue: queue)
 
             source.setEventHandler { [weak self] in

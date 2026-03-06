@@ -1,5 +1,9 @@
 import ArgumentParser
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 import Foundation
 import PostServer
 import SwiftMail
@@ -1350,7 +1354,7 @@ extension PostCLI {
             } catch {
                 fputs("\(error.localizedDescription)\n", stderr)
                 await proxy.disconnect()
-                Darwin.exit(1)
+                _Exit(1)
             }
 
             await proxy.disconnect()
