@@ -53,8 +53,20 @@ extension PostDaemon {
             process.standardError = logHandle
 
             try process.run()
+
+            // Poll until the child writes its PID file (max ~3 s) so that
+            // `postd status` immediately after `postd start` sees the daemon.
+            let expectedPID = process.processIdentifier
+            let maxAttempts = 30  // 30 × 100 ms = 3 s
+            for _ in 0..<maxAttempts {
+                if let writtenPID = try? PIDFileManager.readPID(), writtenPID == expectedPID {
+                    break
+                }
+                usleep(100_000)  // 100 ms
+            }
+
             let logger = Logger(label: "com.cocoanetics.Post.postd")
-            logger.info("postd started in background (PID \(process.processIdentifier)).")
+            logger.info("postd started in background (PID \(expectedPID)).")
         }
 
         private func runForeground() async throws {

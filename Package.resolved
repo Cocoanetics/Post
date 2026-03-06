@@ -1,5 +1,5 @@
 {
-  "originHash" : "f92918c4f8e61c5d44092d92f3bb822acd61a87cf8eba05e4cfd6fe344426ebd",
+  "originHash" : "4afd317e2f4c423668db6f0a483eb4ca6bb15f9f44ff8306347a1ecfe274d380",
   "pins" : [
     {
       "identity" : "anycodable",
@@ -141,8 +141,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftMail",
       "state" : {
-        "revision" : "1eb3e7aa315d8dc7dd28f1b851942f4bf3a63626",
-        "version" : "1.0.5"
+        "revision" : "9b2218705c378a12c205eb6a7cf0aafb6f460895",
+        "version" : "1.1.0"
       }
     },
     {
@@ -151,7 +151,7 @@
       "location" : "https://github.com/Cocoanetics/SwiftMCP",
       "state" : {
         "branch" : "main",
-        "revision" : "9b2a04e217282d8827dcb07c23b8f8e756efb48c"
+        "revision" : "ea31fa44e78a433b731415844f8c565c45bcad2a"
       }
     },
     {
@@ -159,8 +159,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftText",
       "state" : {
-        "revision" : "09a02476224f41b59407a9ebb94f66151e5596aa",
-        "version" : "1.0.0"
+        "revision" : "f51450b1bd42523fa202be4f8d13490439e88dd0",
+        "version" : "1.0.1"
       }
     },
     {
