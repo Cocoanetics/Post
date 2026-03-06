@@ -270,19 +270,19 @@ public actor PostServer {
 
                 Self.logDiagnostic("runIdleWatch loop starting for \(serverId)/\(mailbox)")
 
-                // Baseline: determine the current max UID via an ephemeral fetch connection.
+                // Baseline: determine the current max UID from the SELECT response's UIDNEXT.
+                // UIDNEXT - 1 is the highest possible UID (the UID may not exist if deleted,
+                // but that's fine — we only use it as a high-water mark for new message detection).
                 var lastSeenUID: Int = 0
                 do {
                     let conn = try await Self.fetchConnection(cache: &fetchCache, server: server, serverId: serverId, mailbox: mailbox)
                     let status = try await conn.selectMailbox(mailbox)
-                    if let latest = status.latest(1) {
-                        let infos = try await conn.fetchMessageInfosBulk(using: latest)
-                        if let uid = infos.first?.uid {
-                            lastSeenUID = Int(uid.value)
-                        }
+                    let uidNextValue = Int(status.uidNext.value)
+                    if uidNextValue > 1 {
+                        lastSeenUID = uidNextValue - 1
                     }
 
-                    Self.logDiagnostic("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID)")
+                    Self.logDiagnostic("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID) (from UIDNEXT)")
                     logger.info("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID)")
                 } catch {
                     Self.logDiagnostic("ERROR baseline failed for \(serverId)/\(mailbox): \(String(describing: error))")
@@ -358,8 +358,19 @@ public actor PostServer {
                     case .exists(let count):
                         Self.logDiagnostic("IDLE EXISTS for \(serverId)/\(mailbox): count=\(count) lastSeenUID=\(lastSeenUID)")
                         Self.logDiagnostic("Fetching new messages after EXISTS for \(serverId)/\(mailbox): minUID=\(lastSeenUID + 1)")
-                        let conn = try await Self.fetchConnection(cache: &fetchCache, server: server, serverId: serverId, mailbox: mailbox)
-                        let newMessages = try await Self.fetchNewMessages(using: conn, mailbox: mailbox, minUID: lastSeenUID + 1)
+
+                        // Fetch with one retry: if the cached connection is stale, invalidate and retry.
+                        let newMessages: [(header: MessageHeader, info: MessageInfo)]
+                        do {
+                            let conn = try await Self.fetchConnection(cache: &fetchCache, server: server, serverId: serverId, mailbox: mailbox)
+                            newMessages = try await Self.fetchNewMessages(using: conn, mailbox: mailbox, minUID: lastSeenUID + 1)
+                        } catch {
+                            Self.logDiagnostic("EXISTS fetch failed for \(serverId)/\(mailbox), retrying with fresh connection: \(String(describing: error))")
+                            fetchCache = nil
+                            let conn = try await Self.fetchConnection(cache: &fetchCache, server: server, serverId: serverId, mailbox: mailbox)
+                            newMessages = try await Self.fetchNewMessages(using: conn, mailbox: mailbox, minUID: lastSeenUID + 1)
+                        }
+
                         Self.logDiagnostic("IDLE delta fetch for \(serverId)/\(mailbox): fetched \(newMessages.count) messages since uid \(lastSeenUID + 1)")
                         for (msg, msgInfo) in newMessages {
                             if msg.uid > lastSeenUID {
