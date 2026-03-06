@@ -1487,7 +1487,7 @@ public actor PostServer {
         switch format.lowercased() {
         case "html":
             htmlBody = body
-            textBody = Self.htmlToPlainText(body)
+            textBody = await Self.htmlToPlainText(body)
         case "markdown":
             htmlBody = Self.wrapMarkdownHTML(Self.markdownToHTML(body))
             textBody = body  // Keep raw markdown for plain text part
@@ -1721,20 +1721,10 @@ public actor PostServer {
             .joined(separator: "\n")
     }
 
-    /// Converts HTML to plain text for a text/plain MIME alternative.
-    private static func htmlToPlainText(_ html: String) -> String {
-        var text = html.replacingOccurrences(of: "(?i)<br\\s*/?>", with: "\n", options: .regularExpression)
-        text = text.replacingOccurrences(of: "(?i)</?(p|div|h[1-6]|li|tr|table|ul|ol|blockquote|pre)\\b[^>]*>", with: "\n", options: .regularExpression)
-        text = text.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-        text = text.replacingOccurrences(of: "&nbsp;", with: " ")
-        text = text.replacingOccurrences(of: "&amp;", with: "&")
-        text = text.replacingOccurrences(of: "&lt;", with: "<")
-        text = text.replacingOccurrences(of: "&gt;", with: ">")
-        text = text.replacingOccurrences(of: "&quot;", with: "\"")
-        text = text.replacingOccurrences(of: "&#39;", with: "'")
-        text = text.replacingOccurrences(of: "[ \\t]+\\n", with: "\n", options: .regularExpression)
-        text = text.replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Converts HTML to plain text (via markdown) for a text/plain MIME alternative.
+    private static func htmlToPlainText(_ html: String) async -> String {
+        let converter = HTMLToMarkdown(data: Data(html.utf8))
+        return (try? await converter.markdown()) ?? html
     }
 
     private static func escapeHTML(_ text: String) -> String {
