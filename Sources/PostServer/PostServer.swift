@@ -1497,7 +1497,7 @@ public actor PostServer {
             let converter = HTMLToMarkdown(data: Data(body.utf8))
             textBody = try await converter.markdown()
         case .markdown:
-            htmlBody = Self.wrapMarkdownHTML(Self.markdownToHTML(body))
+            htmlBody = MarkdownToHTML.document(body, stylesheet: Self.emailStylesheet)
             textBody = body
         case .text:
             textBody = body
@@ -1603,73 +1603,61 @@ public actor PostServer {
     }
 
     /// Wraps Markdown-converted HTML with styling for proper email rendering.
-    private static func wrapMarkdownHTML(_ html: String) -> String {
-        """
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <meta charset="utf-8">
-        <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-            font-size: 14px;
-            line-height: 1.6;
-            color: #333;
-        }
-        blockquote {
-            border-left: 4px solid #ccc;
-            margin: 0.5em 0;
-            padding: 0.25em 0 0.25em 1em;
-            color: #666;
-        }
-        code {
-            background: #f5f5f5;
-            border: 1px solid #ddd;
-            border-radius: 3px;
-            padding: 0.1em 0.3em;
-            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-            font-size: 0.9em;
-        }
-        pre {
-            background: #f5f5f5;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            padding: 0.8em;
-            overflow: auto;
-        }
-        pre code {
-            background: none;
-            border: none;
-            padding: 0;
-        }
-        h1, h2, h3, h4, h5, h6 {
-            margin-top: 1em;
-            margin-bottom: 0.5em;
-            font-weight: 600;
-        }
-        h1 { font-size: 1.8em; }
-        h2 { font-size: 1.5em; }
-        h3 { font-size: 1.3em; }
-        hr {
-            border: none;
-            border-top: 1px solid #ddd;
-            margin: 1em 0;
-        }
-        a {
-            color: #0366d6;
-            text-decoration: none;
-        }
-        a:hover {
-            text-decoration: underline;
-        }
-        </style>
-        </head>
-        <body>
-        \(html)
-        </body>
-        </html>
-        """
+    /// Email-safe stylesheet for Markdown-rendered HTML.
+    private static let emailStylesheet = """
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+        font-size: 14px;
+        line-height: 1.6;
+        color: #333;
     }
+    blockquote {
+        border-left: 4px solid #ccc;
+        margin: 0.5em 0;
+        padding: 0.25em 0 0.25em 1em;
+        color: #666;
+    }
+    code {
+        background: #f5f5f5;
+        border: 1px solid #ddd;
+        border-radius: 3px;
+        padding: 0.1em 0.3em;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 0.9em;
+    }
+    pre {
+        background: #f5f5f5;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 0.8em;
+        overflow: auto;
+    }
+    pre code {
+        background: none;
+        border: none;
+        padding: 0;
+    }
+    h1, h2, h3, h4, h5, h6 {
+        margin-top: 1em;
+        margin-bottom: 0.5em;
+        font-weight: 600;
+    }
+    h1 { font-size: 1.8em; }
+    h2 { font-size: 1.5em; }
+    h3 { font-size: 1.3em; }
+    hr {
+        border: none;
+        border-top: 1px solid #ddd;
+        margin: 1em 0;
+    }
+    a {
+        color: #0366d6;
+        text-decoration: none;
+    }
+    a:hover {
+        text-decoration: underline;
+    }
+    """
 
     /// Wraps plain-text-converted HTML in a minimal email-safe document.
     private static func wrapPlainTextHTML(_ html: String) -> String {
@@ -1684,11 +1672,6 @@ public actor PostServer {
         </body>
         </html>
         """
-    }
-
-    /// Converts Markdown source into HTML.
-    private static func markdownToHTML(_ markdown: String) -> String {
-        MarkdownToHTML.convert(markdown)
     }
 
     /// Converts plain text into simple HTML paragraphs while preserving newlines.

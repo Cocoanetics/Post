@@ -159,8 +159,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftText",
       "state" : {
-        "revision" : "f51450b1bd42523fa202be4f8d13490439e88dd0",
-        "version" : "1.0.1"
+        "revision" : "e0b5142bdf4a859e47ed9dbdd37569acade277bb",
+        "version" : "1.0.2"
       }
     },
     {
