@@ -179,8 +179,8 @@ extension PostCLI {
         @Option(name: .long, help: "Body format: text, html, or markdown (default: markdown)")
         var body: BodyFormat = .markdown
 
-        @Option(name: .long, help: "Output directory for .eml or text files")
-        var out: String?
+        @Option(name: .long, help: "Output path — directory or filename for .eml or text files")
+        var output: String?
 
         @Option(name: .long, help: "Server identifier")
         var server: String?
@@ -192,8 +192,8 @@ extension PostCLI {
         var globals: GlobalOptions
 
         func validate() throws {
-            if eml && out == nil {
-                throw ValidationError("--eml requires --out")
+            if eml && output == nil {
+                throw ValidationError("--eml requires --output")
             }
 
             guard MessageIdentifierSet<UID>(string: uid) != nil else {
@@ -264,8 +264,8 @@ extension PostCLI {
                 }
 
                 let outputDir: URL?
-                if let out, eml || !globals.json {
-                    let directory = URL(fileURLWithPath: out, isDirectory: true)
+                if let output, eml || !globals.json {
+                    let directory = URL(fileURLWithPath: output, isDirectory: true)
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                     outputDir = directory
                 } else {
@@ -279,7 +279,7 @@ extension PostCLI {
 
                     if eml {
                         guard let outputDir else {
-                            throw ValidationError("--eml requires --out")
+                            throw ValidationError("--eml requires --output")
                         }
 
                         let emlData = try await client.downloadEml(serverId: serverId, uid: uidValue, mailbox: mailbox)
@@ -1076,7 +1076,7 @@ extension PostCLI {
                 let uidArray = uidSet.toArray()
 
                 if isExplicitFile && uidArray.count > 1 {
-                    throw ValidationError("Cannot use a filename for --out when exporting multiple UIDs. Use a directory instead.")
+                    throw ValidationError("Cannot use a filename for --output when exporting multiple UIDs. Use a directory instead.")
                 }
 
                 let outputDir = isExplicitFile ? outURL.deletingLastPathComponent() : outURL
