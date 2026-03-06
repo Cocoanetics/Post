@@ -1487,7 +1487,7 @@ public actor PostServer {
         switch format.lowercased() {
         case "html":
             htmlBody = body
-            textBody = await Self.htmlToPlainText(body)
+            textBody = try await Self.htmlToPlainText(body)
         case "markdown":
             htmlBody = Self.wrapMarkdownHTML(Self.markdownToHTML(body))
             textBody = body  // Keep raw markdown for plain text part
@@ -1722,9 +1722,9 @@ public actor PostServer {
     }
 
     /// Converts HTML to plain text (via markdown) for a text/plain MIME alternative.
-    private static func htmlToPlainText(_ html: String) async -> String {
+    private static func htmlToPlainText(_ html: String) async throws -> String {
         let converter = HTMLToMarkdown(data: Data(html.utf8))
-        return (try? await converter.markdown()) ?? html
+        return try await converter.markdown()
     }
 
     private static func escapeHTML(_ text: String) -> String {
