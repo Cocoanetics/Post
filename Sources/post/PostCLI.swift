@@ -1052,8 +1052,8 @@ extension PostCLI {
         @Option(name: .long, help: "Mailbox name")
         var mailbox: String = "INBOX"
 
-        @Option(name: .long, help: "Output path: directory or filename (default: current directory)")
-        var out: String = "."
+        @Option(name: .long, help: "Output path — directory or filename ending in .pdf (default: current directory)")
+        var output: String = "."
 
         func validate() throws {
             guard MessageIdentifierSet<UID>(string: uid) != nil else {
@@ -1068,7 +1068,7 @@ extension PostCLI {
                     throw ValidationError("Invalid UID set '\(uid)'.")
                 }
 
-                let outURL = URL(fileURLWithPath: out)
+                let outURL = URL(fileURLWithPath: output)
                 let isExplicitFile = outURL.pathExtension.lowercased() == "pdf"
                 let uidArray = uidSet.toArray()
 
