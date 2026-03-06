@@ -1015,8 +1015,8 @@ extension PostCLI {
         @Option(name: .long, help: "Mailbox name")
         var mailbox: String = "INBOX"
 
-        @Option(name: .long, help: "Output directory (default: current directory)")
-        var out: String = "."
+        @Option(name: .long, help: "Output path — directory or filename (default: current directory)")
+        var output: String = "."
 
         func run() async throws {
             try await withClient { client in
@@ -1028,11 +1028,14 @@ extension PostCLI {
                     return
                 }
 
-                let outputDir = URL(fileURLWithPath: out, isDirectory: true)
+                let outURL = URL(fileURLWithPath: output)
+                let isExplicitFile = outURL.pathExtension.count > 0
+                let outputDir = isExplicitFile ? outURL.deletingLastPathComponent() : outURL
                 try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-                let destination = outputDir.appendingPathComponent(attachment.filename)
+                let destination = isExplicitFile ? outURL : outputDir.appendingPathComponent(attachment.filename)
+                let displayName = destination.lastPathComponent
                 try data.write(to: destination)
-                print("Saved \(attachment.filename) (\(attachment.contentType), \(formatBytes(attachment.size))) to \(destination.path)")
+                print("Saved \(displayName) (\(attachment.contentType), \(formatBytes(attachment.size))) to \(destination.path)")
             }
         }
     }
