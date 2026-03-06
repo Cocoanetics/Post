@@ -1501,7 +1501,8 @@ public actor PostServer {
             textBody = body
         case .text:
             textBody = body
-            htmlBody = Self.wrapPlainTextHTML(Self.plainTextToHTML(body))
+            let plainHTML = Self.plainTextToHTML(body)
+            htmlBody = Self.wrapHTMLDocument(plainHTML)
         }
 
         var emailAttachments: [Attachment]?
@@ -1660,12 +1661,16 @@ public actor PostServer {
     """
 
     /// Wraps plain-text-converted HTML in a minimal email-safe document.
-    private static func wrapPlainTextHTML(_ html: String) -> String {
+    /// Wraps an HTML fragment in a full document with the email stylesheet.
+    private static func wrapHTMLDocument(_ html: String) -> String {
         """
         <!DOCTYPE html>
         <html>
         <head>
         <meta charset="utf-8">
+        <style>
+        \(emailStylesheet)
+        </style>
         </head>
         <body>
         \(html)
