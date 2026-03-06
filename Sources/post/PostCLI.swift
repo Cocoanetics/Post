@@ -1052,7 +1052,7 @@ extension PostCLI {
         @Option(name: .long, help: "Mailbox name")
         var mailbox: String = "INBOX"
 
-        @Option(name: .long, help: "Output directory (default: current directory)")
+        @Option(name: .long, help: "Output path: directory or filename (default: current directory)")
         var out: String = "."
 
         func validate() throws {
@@ -1068,11 +1068,19 @@ extension PostCLI {
                     throw ValidationError("Invalid UID set '\(uid)'.")
                 }
 
-                let outputDir = URL(fileURLWithPath: out, isDirectory: true)
+                let outURL = URL(fileURLWithPath: out)
+                let isExplicitFile = outURL.pathExtension.lowercased() == "pdf"
+                let uidArray = uidSet.toArray()
+
+                if isExplicitFile && uidArray.count > 1 {
+                    throw ValidationError("Cannot use a filename for --out when exporting multiple UIDs. Use a directory instead.")
+                }
+
+                let outputDir = isExplicitFile ? outURL.deletingLastPathComponent() : outURL
                 try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
 
                 var foundCount = 0
-                for messageUID in uidSet.toArray() {
+                for messageUID in uidArray {
                     let uidValue = Int(messageUID.value)
                     let result = try await client.exportPDF(serverId: serverId, uid: uidValue, mailbox: mailbox)
                     guard let data = Data(base64Encoded: result.data) else {
@@ -1080,9 +1088,10 @@ extension PostCLI {
                         continue
                     }
 
-                    let destination = outputDir.appendingPathComponent(result.filename)
+                    let destination = isExplicitFile ? outURL : outputDir.appendingPathComponent(result.filename)
+                    let displayName = destination.lastPathComponent
                     try data.write(to: destination)
-                    print("Saved \(result.filename) (\(formatBytes(result.size))) to \(destination.path)")
+                    print("Saved \(displayName) (\(formatBytes(result.size))) to \(destination.path)")
                     foundCount += 1
                 }
 

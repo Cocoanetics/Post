@@ -1762,7 +1762,7 @@ public actor PostServer {
     /// Sanitizes a string for use as a filename.
     private static func sanitizeFilename(_ name: String) -> String {
         let cleaned = name.replacingOccurrences(of: "[/\\\\:*?\"<>|]", with: "-", options: .regularExpression)
-        let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = cleaned.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ".")))
         return trimmed.isEmpty ? "message" : String(trimmed.prefix(100))
     }
 
