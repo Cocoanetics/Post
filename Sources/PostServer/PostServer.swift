@@ -152,33 +152,6 @@ public actor PostServer {
 
     private var idleWatchTasks: [String: Task<Void, Never>] = [:]
     private static let idleDiagnosticLogger = Logger(label: "com.cocoanetics.Post.IDLE.Diagnostics")
-    private static let idleHeartbeatCheckIntervalNanoseconds: UInt64 = 60_000_000_000
-    private static let idleHeartbeatInactivityThresholdSeconds: TimeInterval = 900
-
-    private actor IdleWatchActivityTracker {
-        private var lastActivityAt = Date()
-        private var activeFetchOperations = 0
-
-        func markActivity() {
-            lastActivityAt = Date()
-        }
-
-        func beginFetchActivity() {
-            activeFetchOperations += 1
-            lastActivityAt = Date()
-        }
-
-        func endFetchActivity() {
-            if activeFetchOperations > 0 {
-                activeFetchOperations -= 1
-            }
-            lastActivityAt = Date()
-        }
-
-        func inactivitySnapshot(now: Date = Date()) -> (seconds: TimeInterval, hasActiveFetch: Bool) {
-            (now.timeIntervalSince(lastActivityAt), activeFetchOperations > 0)
-        }
-    }
 
     /// Emits IDLE diagnostics through swift-log so daemon log routing can handle persistence.
     private static func logDiagnostic(_ message: String) {
@@ -262,18 +235,23 @@ public actor PostServer {
         return watchConfigurations
     }
 
-    /// Returns the named IMAP connection used for IDLE follow-up commands on a watched mailbox.
-    private static func idleCommandConnection(
-        for server: IMAPServer,
+    /// Returns a cached fetch connection for `serverId/mailbox`, creating a fresh one if needed.
+    private static func fetchConnection(
+        cache: inout IMAPNamedConnection?,
+        server: IMAPServer,
         serverId: String,
         mailbox: String
     ) async throws -> IMAPNamedConnection {
-        let connectionName = "post-idle-\(serverId)-\(mailbox)"
-        return try await server.connection(named: connectionName)
+        if let existing = cache, await existing.isConnected {
+            return existing
+        }
+        let conn = try await server.connection(named: "fetch-\(serverId)-\(mailbox)")
+        cache = conn
+        return conn
     }
 
     /// Runs IDLE watch off the actor so the event loop doesn't block MCP requests.
-    /// Uses server-managed connections: one resilient IDLE stream + one named command connection.
+    /// Uses server-managed connections: one resilient IDLE stream + ephemeral fetch connections.
     private static func runIdleWatch(
         serverId: String,
         mailbox: String,
@@ -281,29 +259,28 @@ public actor PostServer {
         connectionManager: IMAPConnectionManager
     ) async {
         let logger = Logger(label: "com.cocoanetics.Post.IDLE.\(serverId)")
+        var fetchCache: IMAPNamedConnection? = nil
 
         while !Task.isCancelled {
             do {
                 // Get connection inside the detached task (async call to actor)
                 Self.logDiagnostic("runIdleWatch: getting connection for \(serverId)")
                 let server = try await connectionManager.connection(for: serverId)
-                let commandConnection = try await Self.idleCommandConnection(for: server, serverId: serverId, mailbox: mailbox)
-                let activityTracker = IdleWatchActivityTracker()
                 Self.logDiagnostic("runIdleWatch: got connection for \(serverId)")
 
                 Self.logDiagnostic("runIdleWatch loop starting for \(serverId)/\(mailbox)")
 
-                // Baseline: determine the current max UID on the named command connection.
+                // Baseline: determine the current max UID via an ephemeral fetch connection.
                 var lastSeenUID: Int = 0
                 do {
-                    let status = try await commandConnection.selectMailbox(mailbox)
+                    let conn = try await Self.fetchConnection(cache: &fetchCache, server: server, serverId: serverId, mailbox: mailbox)
+                    let status = try await conn.selectMailbox(mailbox)
                     if let latest = status.latest(1) {
-                        let infos = try await commandConnection.fetchMessageInfosBulk(using: latest)
+                        let infos = try await conn.fetchMessageInfosBulk(using: latest)
                         if let uid = infos.first?.uid {
                             lastSeenUID = Int(uid.value)
                         }
                     }
-                    await activityTracker.markActivity()
 
                     Self.logDiagnostic("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID)")
                     logger.info("IDLE baseline for \(serverId)/\(mailbox): lastSeenUID=\(lastSeenUID)")
@@ -317,34 +294,7 @@ public actor PostServer {
                 Self.logDiagnostic("IDLE connection established for \(serverId)/\(mailbox)")
                 logger.info("IDLE connected for \(serverId)/\(mailbox)")
 
-                let heartbeatTask = Task {
-                    while !Task.isCancelled {
-                        do {
-                            try await Task.sleep(nanoseconds: Self.idleHeartbeatCheckIntervalNanoseconds)
-                        } catch {
-                            break
-                        }
-                        if Task.isCancelled { break }
-
-                        let snapshot = await activityTracker.inactivitySnapshot()
-                        if snapshot.hasActiveFetch || snapshot.seconds < Self.idleHeartbeatInactivityThresholdSeconds {
-                            continue
-                        }
-
-                        do {
-                            _ = try await commandConnection.noop()
-                            await activityTracker.markActivity()
-                            let inactivity = Int(snapshot.seconds.rounded())
-                            let message = "Named heartbeat NOOP succeeded for \(serverId)/\(mailbox) after \(inactivity)s inactivity"
-                            Self.logDiagnostic(message)
-                        } catch {
-                            Self.logDiagnostic("ERROR named heartbeat NOOP failed for \(serverId)/\(mailbox): \(String(describing: error))")
-                        }
-                    }
-                }
-
                 defer {
-                    heartbeatTask.cancel()
                     Task {
                         try? await idleSession.done()
                         Self.logDiagnostic("IDLE connection disconnected for \(serverId)/\(mailbox)")
@@ -361,15 +311,8 @@ public actor PostServer {
                     Self.logDiagnostic(
                         "IDLE catch-up fetch for \(serverId)/\(mailbox): minUID=\(catchUpMinUID) (inclusive baseline UID=\(baselineUID))"
                     )
-                    await activityTracker.beginFetchActivity()
-                    let caughtUp: [MessageHeader]
-                    do {
-                        caughtUp = try await Self.fetchNewMessages(using: commandConnection, mailbox: mailbox, minUID: catchUpMinUID)
-                    } catch {
-                        await activityTracker.endFetchActivity()
-                        throw error
-                    }
-                    await activityTracker.endFetchActivity()
+                    let conn = try await Self.fetchConnection(cache: &fetchCache, server: server, serverId: serverId, mailbox: mailbox)
+                    let caughtUp = try await Self.fetchNewMessages(using: conn, mailbox: mailbox, minUID: catchUpMinUID)
                     Self.logDiagnostic("IDLE catch-up for \(serverId)/\(mailbox): fetched \(caughtUp.count) messages since uid \(catchUpMinUID)")
                     for msg in caughtUp {
                         Self.logDiagnostic("IDLE catch-up examining message uid=\(msg.uid) vs lastSeenUID=\(lastSeenUID)")
@@ -384,7 +327,8 @@ public actor PostServer {
                             Self.logDiagnostic("New message (catch-up) \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
                             logger.info("New message (catch-up) on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
                             if let command {
-                                let hookMessage = await Self.fetchHookMessagePayload(using: commandConnection, mailbox: mailbox, header: msg)
+                                let hookConn = try await Self.fetchConnection(cache: &fetchCache, server: server, serverId: serverId, mailbox: mailbox)
+                                let hookMessage = await Self.fetchHookMessagePayload(using: hookConn, mailbox: mailbox, header: msg)
                                 Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: hookMessage)
                             }
                         } else {
@@ -402,21 +346,13 @@ public actor PostServer {
                     // Log every IDLE event for diagnostics.
                     let eventDescription = Self.describeIdleEvent(event)
                     Self.logDiagnostic("IDLE event for \(serverId)/\(mailbox): \(eventDescription)")
-                    await activityTracker.markActivity()
 
                     switch event {
                     case .exists(let count):
                         Self.logDiagnostic("IDLE EXISTS for \(serverId)/\(mailbox): count=\(count) lastSeenUID=\(lastSeenUID)")
                         Self.logDiagnostic("Fetching new messages after EXISTS for \(serverId)/\(mailbox): minUID=\(lastSeenUID + 1)")
-                        await activityTracker.beginFetchActivity()
-                        let newMessages: [MessageHeader]
-                        do {
-                            newMessages = try await Self.fetchNewMessages(using: commandConnection, mailbox: mailbox, minUID: lastSeenUID + 1)
-                        } catch {
-                            await activityTracker.endFetchActivity()
-                            throw error
-                        }
-                        await activityTracker.endFetchActivity()
+                        let conn = try await Self.fetchConnection(cache: &fetchCache, server: server, serverId: serverId, mailbox: mailbox)
+                        let newMessages = try await Self.fetchNewMessages(using: conn, mailbox: mailbox, minUID: lastSeenUID + 1)
                         Self.logDiagnostic("IDLE delta fetch for \(serverId)/\(mailbox): fetched \(newMessages.count) messages since uid \(lastSeenUID + 1)")
                         for msg in newMessages {
                             if msg.uid > lastSeenUID {
@@ -424,7 +360,8 @@ public actor PostServer {
                                 Self.logDiagnostic("New message \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
                                 logger.info("New message on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
                                 if let command {
-                                    let hookMessage = await Self.fetchHookMessagePayload(using: commandConnection, mailbox: mailbox, header: msg)
+                                    let hookConn = try await Self.fetchConnection(cache: &fetchCache, server: server, serverId: serverId, mailbox: mailbox)
+                                    let hookMessage = await Self.fetchHookMessagePayload(using: hookConn, mailbox: mailbox, header: msg)
                                     Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: hookMessage)
                                 }
                             }
@@ -442,10 +379,12 @@ public actor PostServer {
                     }
                 }
 
-                // If stream ends, reconnect
+                // If stream ends, reconnect; discard cached fetch connection
+                fetchCache = nil
                 Self.logDiagnostic("IDLE stream ended for \(serverId)/\(mailbox); reconnecting")
                 logger.warning("IDLE stream ended for \(serverId)/\(mailbox); reconnecting")
             } catch {
+                fetchCache = nil
                 Self.logDiagnostic("ERROR IDLE watch failed for \(serverId)/\(mailbox): \(String(describing: error))")
                 logger.warning("IDLE watch failed for \(serverId)/\(mailbox): \(String(describing: error))")
             }
