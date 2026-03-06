@@ -6,10 +6,12 @@ import Logging
 @preconcurrency import OSLog
 
 /// A swift-log backend that routes all log messages to Apple's unified logging system (Console.app).
-/// Uses a fixed subsystem and derives the OSLog category from the swift-log label.
+///
+/// Derives subsystem and category from the swift-log label:
+/// - Subsystem = first 3 dot-segments (e.g. `com.cocoanetics.Post`)
+/// - Category = 4th segment only (e.g. `IDLE`, `IMAP_IN`, `postd`)
+/// - Instance-specific suffixes (connection IDs, server names) stay in the message.
 struct OSLogHandler: Logging.LogHandler {
-    static let subsystem = "com.cocoanetics.Post"
-
     let label: String
     private let osLog: OSLog
 
@@ -19,21 +21,25 @@ struct OSLogHandler: Logging.LogHandler {
     init(label: String) {
         self.label = label
 
-        // Derive category: strip common prefix, keep the rest as category.
-        // e.g. "com.cocoanetics.Post.IDLE.Diagnostics" → "IDLE.Diagnostics"
-        //      "com.cocoanetics.SwiftMail.IMAP_IN.xyz" → "SwiftMail.IMAP_IN.xyz"
-        //      "com.cocoanetics.SwiftMCP.TCPBonjourTransport" → "SwiftMCP.TCPBonjourTransport"
-        let category: String
-        let prefix = Self.subsystem + "."
-        if label.hasPrefix(prefix) {
-            category = String(label.dropFirst(prefix.count))
-        } else if label.hasPrefix("com.cocoanetics.") {
-            category = String(label.dropFirst("com.cocoanetics.".count))
+        let parts = label.split(separator: ".", maxSplits: 4)
+
+        // Subsystem: first 3 segments (e.g. "com.cocoanetics.Post")
+        let subsystem: String
+        if parts.count >= 3 {
+            subsystem = parts[0...2].joined(separator: ".")
         } else {
-            category = label
+            subsystem = label
         }
 
-        self.osLog = OSLog(subsystem: Self.subsystem, category: category)
+        // Category: 4th segment only (e.g. "IDLE", "IMAP_IN", "postd", "TCPBonjourTransport")
+        let category: String
+        if parts.count >= 4 {
+            category = String(parts[3])
+        } else {
+            category = "general"
+        }
+
+        self.osLog = OSLog(subsystem: subsystem, category: category)
     }
 
     subscript(metadataKey key: String) -> Logging.Logger.Metadata.Value? {
