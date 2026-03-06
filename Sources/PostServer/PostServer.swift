@@ -1338,6 +1338,69 @@ public actor PostServer {
         }
     }
 
+    /// Lists IMAP namespaces for a server (personal, other users, shared).
+    /// Useful for discovering mailbox hierarchies and path separators.
+    /// - Parameter serverId: The server identifier
+    @MCPTool
+    public func listNamespaces(serverId: String) async throws -> NamespaceInfo {
+        try await withServer(serverId: serverId) { server in
+            let response = try await server.fetchNamespaces()
+            let personal = response.personal.map { NamespaceEntry(prefix: $0.prefix, delimiter: $0.delimiter.map(String.init)) }
+            let otherUsers = response.otherUsers.map { NamespaceEntry(prefix: $0.prefix, delimiter: $0.delimiter.map(String.init)) }
+            let shared = response.shared.map { NamespaceEntry(prefix: $0.prefix, delimiter: $0.delimiter.map(String.init)) }
+            return NamespaceInfo(personal: personal, otherUsers: otherUsers, shared: shared)
+        }
+    }
+
+    /// Counts messages matching search criteria using ESEARCH (efficient server-side count).
+    /// Returns count, min UID, and max UID without transferring all matching UIDs.
+    /// - Parameter serverId: The server identifier
+    /// - Parameter mailbox: Mailbox name (default: "INBOX")
+    /// - Parameter from: Search in From field
+    /// - Parameter subject: Search in Subject field
+    /// - Parameter text: Full-text search
+    /// - Parameter since: Messages since date (ISO 8601)
+    /// - Parameter before: Messages before date (ISO 8601)
+    /// - Parameter unseen: Only unseen messages when true
+    /// - Parameter seen: Only seen messages when true
+    /// - Parameter flagged: Only flagged messages when true
+    @MCPTool
+    public func countMessages(
+        serverId: String,
+        mailbox: String = "INBOX",
+        from fromAddress: String? = nil,
+        subject: String? = nil,
+        text: String? = nil,
+        since: String? = nil,
+        before: String? = nil,
+        unseen: Bool? = nil,
+        seen: Bool? = nil,
+        flagged: Bool? = nil
+    ) async throws -> SearchCount {
+        try await withServer(serverId: serverId) { server in
+            _ = try await server.selectMailbox(mailbox)
+
+            var criteria: [SearchCriteria] = []
+            if let fromAddress, !fromAddress.isEmpty { criteria.append(.from(fromAddress)) }
+            if let subject, !subject.isEmpty { criteria.append(.subject(subject)) }
+            if let text, !text.isEmpty { criteria.append(.text(text)) }
+            if let since, !since.isEmpty { criteria.append(.since(try parseISO8601Date(since, field: "since"))) }
+            if let before, !before.isEmpty { criteria.append(.before(try parseISO8601Date(before, field: "before"))) }
+            if unseen == true { criteria.append(.unseen) }
+            if seen == true { criteria.append(.seen) }
+            if flagged == true { criteria.append(.flagged) }
+            if criteria.isEmpty { criteria.append(.all) }
+
+            let result: ExtendedSearchResult<UID> = try await server.extendedSearch(criteria: criteria)
+            return SearchCount(
+                count: result.count,
+                minUID: result.min.map { Int($0.value) },
+                maxUID: result.max.map { Int($0.value) },
+                all: result.all.map { $0.toArray().map { Int($0.value) } }
+            )
+        }
+    }
+
     /// Downloads an attachment from a message
     /// - Parameter serverId: The server identifier
     /// - Parameter uid: The message UID

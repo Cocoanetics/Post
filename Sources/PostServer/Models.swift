@@ -153,3 +153,42 @@ public struct DraftResult: Codable, Sendable {
 
 // MailboxStatusInfo, QuotaInfo, QuotaResourceInfo removed — Post now returns
 // Mailbox.Status and Quota from SwiftMail directly (both Codable + Sendable).
+
+@Schema
+public struct NamespaceEntry: Codable, Sendable {
+    public let prefix: String
+    public let delimiter: String?
+
+    public init(prefix: String, delimiter: String?) {
+        self.prefix = prefix
+        self.delimiter = delimiter
+    }
+}
+
+@Schema
+public struct NamespaceInfo: Codable, Sendable {
+    public let personal: [NamespaceEntry]
+    public let otherUsers: [NamespaceEntry]
+    public let shared: [NamespaceEntry]
+
+    public init(personal: [NamespaceEntry], otherUsers: [NamespaceEntry], shared: [NamespaceEntry]) {
+        self.personal = personal
+        self.otherUsers = otherUsers
+        self.shared = shared
+    }
+}
+
+@Schema
+public struct SearchCount: Codable, Sendable {
+    public let count: Int?
+    public let minUID: Int?
+    public let maxUID: Int?
+    public let all: [Int]?
+
+    public init(count: Int?, minUID: Int?, maxUID: Int?, all: [Int]?) {
+        self.count = count
+        self.minUID = minUID
+        self.maxUID = maxUID
+        self.all = all
+    }
+}
