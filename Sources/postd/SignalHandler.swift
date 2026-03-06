@@ -1,5 +1,11 @@
 #if canImport(Darwin)
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
 #elseif canImport(Glibc)
 import Glibc
 #endif
