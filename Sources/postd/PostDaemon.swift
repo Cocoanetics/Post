@@ -81,7 +81,8 @@ extension PostDaemon {
                 return handler
             }
             #else
-            try Self.redirectStandardStreamsToLogFile()
+            // On Linux, log to stderr and let the process manager handle persistence
+            // (systemd → journald, Docker → docker logs, manual → pipe to file).
             LoggingSystem.bootstrap { label in
                 var handler = StreamLogHandler.standardError(label: label)
                 handler.logLevel = .trace
@@ -151,27 +152,7 @@ extension PostDaemon {
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(daemonLogRelativePath)
         }
 
-        private static func redirectStandardStreamsToLogFile() throws {
-            let logURL = daemonLogURL
-            try FileManager.default.createDirectory(
-                at: logURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            if !FileManager.default.fileExists(atPath: logURL.path) {
-                FileManager.default.createFile(atPath: logURL.path, contents: nil)
-            }
-
-            let logHandle = try FileHandle(forWritingTo: logURL)
-            _ = try logHandle.seekToEnd()
-
-            let fileDescriptor = logHandle.fileDescriptor
-            guard dup2(fileDescriptor, STDOUT_FILENO) >= 0 else {
-                throw POSIXError(.init(rawValue: errno) ?? .EIO)
-            }
-            guard dup2(fileDescriptor, STDERR_FILENO) >= 0 else {
-                throw POSIXError(.init(rawValue: errno) ?? .EIO)
-            }
-        }
+    
     }
 
     struct Stop: AsyncParsableCommand {
