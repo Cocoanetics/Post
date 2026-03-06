@@ -1723,6 +1723,7 @@ public actor PostServer {
 
     /// Converts HTML to plain text for a text/plain MIME alternative.
     private static func htmlToPlainText(_ html: String) -> String {
+        #if canImport(AppKit)
         if let data = html.data(using: .utf8) {
             let options: [NSAttributedString.DocumentReadingOptionKey: Any] = [
                 .documentType: NSAttributedString.DocumentType.html,
@@ -1734,6 +1735,7 @@ public actor PostServer {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
+        #endif
 
         var text = html.replacingOccurrences(of: "(?i)<br\\s*/?>", with: "\n", options: .regularExpression)
         text = text.replacingOccurrences(of: "(?i)</?(p|div|h[1-6]|li|tr|table|ul|ol|blockquote|pre)\\b[^>]*>", with: "\n", options: .regularExpression)
@@ -1791,7 +1793,12 @@ public actor PostServer {
         }
 
         var results: [String] = []
-        for i in 0..<Int(gt.gl_matchc) {
+        #if os(macOS)
+        let count = Int(gt.gl_matchc)
+        #else
+        let count = Int(gt.gl_pathc)
+        #endif
+        for i in 0..<count {
             if let cStr = gt.gl_pathv[i] {
                 results.append(String(cString: cStr))
             }
@@ -1799,7 +1806,7 @@ public actor PostServer {
         return results.sorted()
     }
 
-    private func withServer<T>(serverId: String, operation: (IMAPServer) async throws -> T) async throws -> T {
+    private func withServer<T: Sendable>(serverId: String, operation: (IMAPServer) async throws -> T) async throws -> T {
         try await assertServerAccessAllowed(serverId)
 
         do {
