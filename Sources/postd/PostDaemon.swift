@@ -74,11 +74,20 @@ extension PostDaemon {
 
             let configuration = try PostConfiguration.load()
 
+            #if canImport(OSLog)
             LoggingSystem.bootstrap { label in
                 var handler = OSLogHandler(label: label)
                 handler.logLevel = .trace
                 return handler
             }
+            #else
+            try Self.redirectStandardStreamsToLogFile()
+            LoggingSystem.bootstrap { label in
+                var handler = StreamLogHandler.standardError(label: label)
+                handler.logLevel = .trace
+                return handler
+            }
+            #endif
             let daemonLogger = Logger(label: "com.cocoanetics.Post.postd")
 
             let server = PostServer(configuration: configuration)
