@@ -1452,13 +1452,20 @@ public actor PostServer {
         #endif
     }
 
+    /// Body format for composing emails.
+    public enum BodyFormat: String, Codable, Sendable, CaseIterable {
+        case text
+        case html
+        case markdown
+    }
+
     /// Creates a new email draft and appends it to the Drafts mailbox.
     /// - Parameter serverId: The server identifier
     /// - Parameter from: Sender email address
     /// - Parameter to: Comma-separated recipient email addresses
     /// - Parameter subject: Email subject
     /// - Parameter body: The body content
-    /// - Parameter format: Body format: "text" (default), "html", or "markdown"
+    /// - Parameter format: Body format: text (default), html, or markdown
     /// - Parameter cc: Optional comma-separated CC addresses
     /// - Parameter bcc: Optional comma-separated BCC addresses
     /// - Parameter attachments: Optional comma-separated file paths to attach
@@ -1470,7 +1477,7 @@ public actor PostServer {
         to: String,
         subject: String,
         body: String,
-        format: String = "text",
+        format: BodyFormat = .text,
         cc: String? = nil,
         bcc: String? = nil,
         attachments: String? = nil,
@@ -1484,14 +1491,15 @@ public actor PostServer {
         let textBody: String
         let htmlBody: String?
 
-        switch format.lowercased() {
-        case "html":
+        switch format {
+        case .html:
             htmlBody = body
-            textBody = try await Self.htmlToPlainText(body)
-        case "markdown":
+            let converter = HTMLToMarkdown(data: Data(body.utf8))
+            textBody = try await converter.markdown()
+        case .markdown:
             htmlBody = Self.wrapMarkdownHTML(Self.markdownToHTML(body))
-            textBody = body  // Keep raw markdown for plain text part
-        default:
+            textBody = body
+        case .text:
             textBody = body
             htmlBody = Self.wrapPlainTextHTML(Self.plainTextToHTML(body))
         }
@@ -1721,11 +1729,7 @@ public actor PostServer {
             .joined(separator: "\n")
     }
 
-    /// Converts HTML to plain text (via markdown) for a text/plain MIME alternative.
-    private static func htmlToPlainText(_ html: String) async throws -> String {
-        let converter = HTMLToMarkdown(data: Data(html.utf8))
-        return try await converter.markdown()
-    }
+    
 
     private static func escapeHTML(_ text: String) -> String {
         var escaped = text

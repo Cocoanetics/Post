@@ -1174,14 +1174,14 @@ extension PostCLI {
         var globals: GlobalOptions
 
         func run() async throws {
-            let format: String
+            let format: PostServer.BodyFormat
             switch detectDraftBodyInputFormat(body) {
             case .html:
-                format = "html"
+                format = .html
             case .markdown:
-                format = "markdown"
+                format = .markdown
             case .plainText:
-                format = "text"
+                format = .text
             }
 
             try await withClient { client in
@@ -1283,11 +1283,11 @@ extension PostCLI {
                     to: toAddress,
                     subject: replySubject,
                     body: fullBody,
-                    format: "text",
+                    format: .text,
                     cc: ccAddresses.isEmpty ? nil : ccAddresses,
                     bcc: nil,
                     attachments: attachments,
-                    mailbox: nil  // Use server's Drafts folder
+                    mailbox: nil
                 )
                 
                 if globals.json {
