@@ -1,5 +1,5 @@
 {
-  "originHash" : "4afd317e2f4c423668db6f0a483eb4ca6bb15f9f44ff8306347a1ecfe274d380",
+  "originHash" : "3d1cb558118e39fe98117b25a389bc4661e4677511d40efd5af9c626df9458fe",
   "pins" : [
     {
       "identity" : "anycodable",
@@ -150,8 +150,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftMCP",
       "state" : {
-        "branch" : "main",
-        "revision" : "fd0bc2f165300ece43cc438469d283f72d425b55"
+        "revision" : "17812b6bd272a74e1d0c512dc0a7c908b1b4ab36",
+        "version" : "1.0.0"
       }
     },
     {
