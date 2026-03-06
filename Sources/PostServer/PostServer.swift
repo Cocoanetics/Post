@@ -1761,9 +1761,23 @@ public actor PostServer {
 
     /// Sanitizes a string for use as a filename.
     private static func sanitizeFilename(_ name: String) -> String {
-        let cleaned = name.replacingOccurrences(of: "[/\\\\:*?\"<>|]", with: "-", options: .regularExpression)
-        let trimmed = cleaned.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ".")))
-        return trimmed.isEmpty ? "message" : String(trimmed.prefix(100))
+        // Strip control characters (0x00-0x1F, 0x7F)
+        var cleaned = name.unicodeScalars.filter { $0.value >= 0x20 && $0.value != 0x7F }.map(String.init).joined()
+        // Replace filesystem-unsafe characters (Unix + Windows)
+        cleaned = cleaned.replacingOccurrences(of: "[/\\\\:*?\"<>|]", with: "-", options: .regularExpression)
+        // Collapse multiple consecutive dashes
+        cleaned = cleaned.replacingOccurrences(of: "-{2,}", with: "-", options: .regularExpression)
+        // Trim leading/trailing whitespace, periods, and dashes
+        let trimChars = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ".-"))
+        let trimmed = cleaned.trimmingCharacters(in: trimChars)
+        // Guard against empty or Windows-reserved names
+        let reserved: Set<String> = ["CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"]
+        if trimmed.isEmpty || reserved.contains(trimmed.uppercased()) {
+            return "message"
+        }
+        return String(trimmed.prefix(100))
     }
 
     /// Expands a glob pattern (e.g. `~/docs/*.pdf`) into matching file paths.
