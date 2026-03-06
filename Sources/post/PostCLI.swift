@@ -17,6 +17,13 @@ import SwiftMCP
 import SwiftTextHTML
 @preconcurrency import AnyCodable
 
+/// Prints a message to standard error
+private func printError(_ message: String) {
+    if let data = message.data(using: .utf8) {
+        FileHandle.standardError.write(data)
+    }
+}
+
 /// Prints IDLE event log notifications from the daemon to stdout.
 private final class IdleEventLogger: MCPServerProxyLogNotificationHandling, @unchecked Sendable {
     private let dateFormatter: DateFormatter = {
@@ -356,7 +363,7 @@ extension PostCLI {
                 }
 
                 if foundCount == 0 {
-                    fputs("Error: No messages found\n", stderr)
+                    printError("Error: No messages found\n")
                     throw ExitCode.failure
                 }
 
@@ -1110,7 +1117,7 @@ extension PostCLI {
                     let uidValue = Int(messageUID.value)
                     let result = try await client.exportPDF(serverId: serverId, uid: uidValue, mailbox: mailbox)
                     guard let data = Data(base64Encoded: result.data) else {
-                        fputs("Error: Failed to decode PDF for UID \(uidValue)\n", stderr)
+                        printError("Error: Failed to decode PDF for UID \(uidValue)\n")
                         continue
                     }
 
@@ -1122,7 +1129,7 @@ extension PostCLI {
                 }
 
                 if foundCount == 0 {
-                    fputs("Error: No PDFs exported\n", stderr)
+                    printError("Error: No PDFs exported\n")
                     throw ExitCode.failure
                 }
             }
@@ -1350,7 +1357,7 @@ extension PostCLI {
             try await proxy.connect()
             try await setProxyLogLevel(.debug, on: proxy)
 
-            fputs("Connected to postd. Watching IDLE events (Ctrl+C to stop)...\n", stderr)
+            printError("Connected to postd. Watching IDLE events (Ctrl+C to stop)...\n")
 
             let client = PostProxy(proxy: proxy)
             do {
@@ -1358,7 +1365,7 @@ extension PostCLI {
             } catch is CancellationError {
                 // Expected on Ctrl+C
             } catch {
-                fputs("\(error.localizedDescription)\n", stderr)
+                printError("\(error.localizedDescription)\n")
                 await proxy.disconnect()
                 _Exit(1)
             }
