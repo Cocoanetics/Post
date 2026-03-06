@@ -317,7 +317,7 @@ public actor PostServer {
                     let conn = try await Self.fetchConnection(cache: &fetchCache, server: server, serverId: serverId, mailbox: mailbox)
                     let caughtUp = try await Self.fetchNewMessages(using: conn, mailbox: mailbox, minUID: catchUpMinUID)
                     Self.logDiagnostic("IDLE catch-up for \(serverId)/\(mailbox): fetched \(caughtUp.count) messages since uid \(catchUpMinUID)")
-                    for msg in caughtUp {
+                    for (msg, msgInfo) in caughtUp {
                         Self.logDiagnostic("IDLE catch-up examining message uid=\(msg.uid) vs lastSeenUID=\(lastSeenUID)")
                         let isBaselineMessage = baselineMessagePending && msg.uid == baselineUID
                         if msg.uid > lastSeenUID || isBaselineMessage {
@@ -331,7 +331,7 @@ public actor PostServer {
                             logger.info("New message (catch-up) on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
                             if let command {
                                 let hookConn = try await Self.fetchConnection(cache: &fetchCache, server: server, serverId: serverId, mailbox: mailbox)
-                                let hookMessage = await Self.fetchHookMessagePayload(using: hookConn, mailbox: mailbox, header: msg)
+                                let hookMessage = await Self.buildHookMessagePayload(using: hookConn, mailbox: mailbox, header: msg, messageInfo: msgInfo)
                                 Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: hookMessage)
                             }
                         } else {
@@ -361,14 +361,14 @@ public actor PostServer {
                         let conn = try await Self.fetchConnection(cache: &fetchCache, server: server, serverId: serverId, mailbox: mailbox)
                         let newMessages = try await Self.fetchNewMessages(using: conn, mailbox: mailbox, minUID: lastSeenUID + 1)
                         Self.logDiagnostic("IDLE delta fetch for \(serverId)/\(mailbox): fetched \(newMessages.count) messages since uid \(lastSeenUID + 1)")
-                        for msg in newMessages {
+                        for (msg, msgInfo) in newMessages {
                             if msg.uid > lastSeenUID {
                                 lastSeenUID = msg.uid
                                 Self.logDiagnostic("New message \(serverId)/\(mailbox): uid=\(msg.uid) subject=\(msg.subject)")
                                 logger.info("New message on \(serverId)/\(mailbox): uid=\(msg.uid) from=\(msg.from)")
                                 if let command {
                                     let hookConn = try await Self.fetchConnection(cache: &fetchCache, server: server, serverId: serverId, mailbox: mailbox)
-                                    let hookMessage = await Self.fetchHookMessagePayload(using: hookConn, mailbox: mailbox, header: msg)
+                                    let hookMessage = await Self.buildHookMessagePayload(using: hookConn, mailbox: mailbox, header: msg, messageInfo: msgInfo)
                                     Self.executeHookCommand(command, serverId: serverId, mailbox: mailbox, message: hookMessage)
                                 }
                             }
@@ -433,20 +433,21 @@ public actor PostServer {
     }
 
     /// Fetches new messages using the IDLE watch's named command connection.
-    private static func fetchNewMessages(using connection: IMAPNamedConnection, mailbox: String, minUID: Int) async throws -> [MessageHeader] {
+    private static func fetchNewMessages(using connection: IMAPNamedConnection, mailbox: String, minUID: Int) async throws -> [(header: MessageHeader, info: MessageInfo)] {
         _ = try await connection.selectMailbox(mailbox)
         let safeMinUID = max(1, minUID)
         let infos = try await connection.fetchMessageInfos(uidRange: UID(safeMinUID)...)
-        return infos.compactMap { info -> MessageHeader? in
+        return infos.compactMap { info -> (header: MessageHeader, info: MessageInfo)? in
             let uidInt = Int(info.uid?.value ?? 0)
             guard uidInt > 0, uidInt >= minUID else { return nil }
-            return MessageHeader(
+            let header = MessageHeader(
                 uid: uidInt,
                 from: info.from ?? "Unknown",
                 subject: info.subject ?? "(No Subject)",
                 date: formatHookDate(info.date),
                 flag: MailFlagColor(flags: info.flags)?.rawValue
             )
+            return (header: header, info: info)
         }
     }
 
@@ -486,7 +487,58 @@ public actor PostServer {
         return withoutFractional.date(from: trimmed)
     }
 
+    /// Builds a hook payload from an already-fetched MessageInfo, only fetching the body (markdown).
+    private static func buildHookMessagePayload(
+        using connection: IMAPNamedConnection,
+        mailbox: String,
+        header: MessageHeader,
+        messageInfo: MessageInfo
+    ) async -> HookMessagePayload {
+        let markdown = await fetchHookMarkdown(using: connection, messageInfo: messageInfo)
+        let decodedAdditionalHeaders = decodeAdditionalHeaders(messageInfo.additionalFields)
+        let replyTo = extractReplyTo(from: decodedAdditionalHeaders)
+        let decodedFrom = decodeHeaderValue(messageInfo.from ?? header.from)
+        let decodedTo = decodeRecipientList(messageInfo.to)
+        let decodedSubject = decodeHeaderValue(messageInfo.subject ?? header.subject)
+        let attachmentParts = messageInfo.parts.filter(isAttachmentPart)
+        let attachments: [HookAttachmentPayload] = attachmentParts.map { part in
+            let filename = canonicalAttachmentFilename(part)
+            return HookAttachmentPayload(
+                filename: filename,
+                contentType: part.contentType,
+                disposition: part.disposition,
+                section: part.section.description,
+                contentId: part.contentId,
+                encoding: part.encoding,
+                size: nil
+            )
+        }
+
+        let resolvedDate = resolveHookDate(messageDate: messageInfo.date, headerDate: header.date)
+        let headers = buildHookHeaders(
+            additionalHeaders: decodedAdditionalHeaders,
+            from: decodedFrom,
+            to: decodedTo,
+            replyTo: replyTo,
+            subject: decodedSubject,
+            date: formatHookDate(resolvedDate)
+        )
+        return HookMessagePayload(
+            uid: header.uid,
+            mailbox: mailbox,
+            from: decodedFrom,
+            to: decodedTo,
+            replyTo: replyTo,
+            date: resolvedDate,
+            subject: decodedSubject,
+            markdown: markdown,
+            attachments: attachments,
+            headers: headers
+        )
+    }
+
     /// Fetches all hook-relevant message fields (headers, markdown body, attachment names).
+    /// Used only by MCP tools and other callers that don't already have a MessageInfo.
     private static func fetchHookMessagePayload(
         using connection: IMAPNamedConnection,
         mailbox: String,
