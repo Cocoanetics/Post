@@ -73,10 +73,9 @@ extension PostDaemon {
             try PIDFileManager.ensureNotRunning()
 
             let configuration = try PostConfiguration.load()
-            try Self.redirectStandardStreamsToLogFile()
 
             LoggingSystem.bootstrap { label in
-                var handler = StreamLogHandler.standardError(label: label)
+                var handler = OSLogHandler(label: label)
                 handler.logLevel = .trace
                 return handler
             }
