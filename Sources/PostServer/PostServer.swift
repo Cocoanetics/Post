@@ -72,6 +72,9 @@ public enum PostServerError: Error, LocalizedError, Sendable {
 
 @MCPServer(name: "Post", generateClient: true)
 public actor PostServer {
+    /// Override macro-generated version with the shared version constant.
+    public nonisolated var serverVersion: String { postVersion }
+
     private struct HookAttachmentPayload: Encodable, Sendable {
         let filename: String
         let contentType: String
