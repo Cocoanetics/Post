@@ -28,6 +28,10 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0")
     ],
     targets: [
+        .plugin(
+            name: "VersionGeneratorPlugin",
+            capability: .buildTool()
+        ),
         .target(
             name: "PostServer",
             dependencies: [
@@ -35,6 +39,9 @@ let package = Package(
                 .product(name: "SwiftMail", package: "SwiftMail"),
                 .product(name: "SwiftTextHTML", package: "SwiftText"),
                 .product(name: "Logging", package: "swift-log")
+            ],
+            plugins: [
+                .plugin(name: "VersionGeneratorPlugin")
             ]
         ),
         .executableTarget(
@@ -44,9 +51,6 @@ let package = Package(
                 .product(name: "SwiftMCP", package: "SwiftMCP"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Logging", package: "swift-log")
-            ],
-            linkerSettings: [
-                .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", "Sources/postd/Info.plist"])
             ]
         ),
         .executableTarget(
@@ -55,9 +59,6 @@ let package = Package(
                 "PostServer",
                 .product(name: "SwiftMCP", package: "SwiftMCP"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
-            ],
-            linkerSettings: [
-                .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", "Sources/post/Info.plist"])
             ]
         ),
         .testTarget(
