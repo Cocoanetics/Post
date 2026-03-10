@@ -29,6 +29,9 @@ public final class SignalHandler {
         }
 
         func setup(on queue: DispatchQueue) {
+            // Ignore SIGPIPE to prevent crashes when writing to closed sockets or pipes
+            signal(SIGPIPE, SIG_IGN)
+
             install(signal: SIGINT, on: queue)
             install(signal: SIGTERM, on: queue)
             install(signal: SIGHUP, on: queue)

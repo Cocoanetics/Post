@@ -80,6 +80,9 @@ extension PostDaemon {
         }
 
         private func runForeground() async throws {
+            // Ignore SIGPIPE to prevent crashes on broken sockets and pipes
+            signal(SIGPIPE, SIG_IGN)
+
             try PIDFileManager.ensureNotRunning()
 
             let configuration = try PostConfiguration.load()
