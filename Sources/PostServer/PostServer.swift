@@ -2014,6 +2014,12 @@ public actor PostServer {
             return date
         }
 
+        let dateOnly = ISO8601DateFormatter()
+        dateOnly.formatOptions = [.withFullDate]
+        if let date = dateOnly.date(from: trimmed) {
+            return date
+        }
+
         throw PostServerError.invalidDate(field, value)
     }
 
