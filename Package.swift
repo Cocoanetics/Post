@@ -64,7 +64,8 @@ let package = Package(
         .testTarget(
             name: "PostCLITests",
             dependencies: [
-                "post"
+                "post",
+                "postd"
             ]
         )
     ]

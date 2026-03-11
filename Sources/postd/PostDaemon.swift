@@ -44,7 +44,7 @@ extension PostDaemon {
 
         private func launchDetachedProcess() throws {
             let process = Process()
-            process.executableURL = Bundle.main.executableURL
+            process.executableURL = try ExecutablePathResolver.currentExecutableURL()
             process.arguments = ["start", "--foreground"]
             process.currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 
@@ -252,6 +252,74 @@ extension PostDaemon {
                 logger.warning("postd is not running (stale PID file for PID \(pid)).")
             }
         }
+    }
+}
+
+enum ExecutablePathResolver {
+    static func currentExecutableURL(
+        bundleExecutableURL: URL? = Bundle.main.executableURL,
+        argv0: String = CommandLine.arguments.first ?? "postd",
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        currentDirectoryPath: String = FileManager.default.currentDirectoryPath
+    ) throws -> URL {
+        let fileManager = FileManager.default
+
+        if let bundleExecutableURL,
+           bundleExecutableURL.path.hasPrefix("/"),
+           fileManager.isExecutableFile(atPath: bundleExecutableURL.path)
+        {
+            return bundleExecutableURL.standardizedFileURL
+        }
+
+        let executableURL = resolveExecutableURL(
+            argv0: argv0,
+            pathEnvironment: environment["PATH"],
+            currentDirectoryPath: currentDirectoryPath,
+            fileManager: fileManager
+        )
+
+        guard let executableURL else {
+            throw ValidationError("Unable to locate the current postd executable for background relaunch.")
+        }
+
+        return executableURL
+    }
+
+    static func resolveExecutableURL(
+        argv0: String,
+        pathEnvironment: String?,
+        currentDirectoryPath: String,
+        fileManager: FileManager = .default
+    ) -> URL? {
+        if argv0.hasPrefix("/") {
+            return executableURLIfPresent(at: URL(fileURLWithPath: argv0), fileManager: fileManager)
+        }
+
+        if argv0.contains("/") {
+            let baseURL = URL(fileURLWithPath: currentDirectoryPath, isDirectory: true)
+            return executableURLIfPresent(at: baseURL.appendingPathComponent(argv0), fileManager: fileManager)
+        }
+
+        guard let pathEnvironment else {
+            return nil
+        }
+
+        for directory in pathEnvironment.split(separator: ":").map(String.init) where !directory.isEmpty {
+            let candidate = URL(fileURLWithPath: directory, isDirectory: true).appendingPathComponent(argv0)
+            if let resolved = executableURLIfPresent(at: candidate, fileManager: fileManager) {
+                return resolved
+            }
+        }
+
+        return nil
+    }
+
+    private static func executableURLIfPresent(at url: URL, fileManager: FileManager) -> URL? {
+        let standardizedURL = url.standardizedFileURL
+        guard fileManager.isExecutableFile(atPath: standardizedURL.path) else {
+            return nil
+        }
+        return standardizedURL
     }
 }
 
