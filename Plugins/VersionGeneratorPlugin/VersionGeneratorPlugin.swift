@@ -13,9 +13,13 @@ struct VersionGeneratorPlugin: BuildToolPlugin {
                 arguments: [
                     "-c",
                     """
-                    VERSION=$(git -C "\(context.package.directoryURL.path())" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+                    if [ -f "\(context.package.directoryURL.path())/.version" ]; then
+                        VERSION=$(cat "\(context.package.directoryURL.path())/.version")
+                    else
+                        VERSION=$(git -C "\(context.package.directoryURL.path())" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+                    fi
                     if [ -z "$VERSION" ]; then VERSION="0.0.0"; fi
-                    echo '// Auto-generated from git tag — do not edit' > "\(outputPath.path())"
+                    echo '// Auto-generated from git tag or .version file — do not edit' > "\(outputPath.path())"
                     echo 'public let postVersion = "'"$VERSION"'"' >> "\(outputPath.path())"
                     """
                 ],
