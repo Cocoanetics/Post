@@ -127,6 +127,7 @@ public actor PostServer {
             case subject
             case markdown
             case flags
+            case attachments
             case headers
         }
 
@@ -139,6 +140,7 @@ public actor PostServer {
             try container.encode(subject, forKey: .subject)
             try container.encode(markdown ?? "", forKey: .markdown)
             try container.encode(flags, forKey: .flags)
+            try container.encode(attachments, forKey: .attachments)
             try container.encode(headers, forKey: .headers)
         }
     }
