@@ -16,7 +16,7 @@ struct VersionGeneratorPlugin: BuildToolPlugin {
                     VERSION=$(git -C "\(context.package.directoryURL.path())" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
                     if [ -z "$VERSION" ]; then VERSION="0.0.0"; fi
                     echo '// Auto-generated from git tag — do not edit' > "\(outputPath.path())"
-                    echo 'let postVersion = "'"$VERSION"'"' >> "\(outputPath.path())"
+                    echo 'public let postVersion = "'"$VERSION"'"' >> "\(outputPath.path())"
                     """
                 ],
                 outputFilesDirectory: context.pluginWorkDirectoryURL

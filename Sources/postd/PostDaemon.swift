@@ -20,6 +20,7 @@ struct PostDaemon: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "postd",
         abstract: "Post IMAP daemon",
+        version: postVersion,
         subcommands: [Start.self, Stop.self, Reload.self, Status.self],
         defaultSubcommand: Start.self
     )

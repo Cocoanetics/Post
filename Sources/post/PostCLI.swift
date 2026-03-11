@@ -90,7 +90,8 @@ struct PostCLI: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "post",
         abstract: "Post CLI client",
-        subcommands: operationalSubcommands + (apiKeyCommandVisible ? configurationSubcommands : []),
+        version: postVersion,
+        subcommands: operationalSubcommands + (apiKeyCommandVisible ? configurationSubcommands : [])
     )
 
     private static let operationalSubcommands: [ParsableCommand.Type] = [
