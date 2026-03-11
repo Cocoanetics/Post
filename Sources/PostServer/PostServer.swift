@@ -3,7 +3,6 @@ import Logging
 import SwiftMCP
 import SwiftMail
 import SwiftTextHTML
-@preconcurrency import AnyCodable
 
 public enum PostServerError: Error, LocalizedError, Sendable {
     case invalidLimit(Int)
@@ -1521,7 +1520,7 @@ public actor PostServer {
     }
 
     /// Body format for composing emails.
-    public enum BodyFormat: String, Codable, Sendable, CaseIterable {
+    public enum BodyFormat: String, Sendable, CaseIterable {
         case text
         case html
         case markdown
@@ -1644,12 +1643,12 @@ public actor PostServer {
         await session.sendLogNotification(LogMessage(
             level: .info,
             logger: "idle",
-            data: AnyCodable("Subscribed to IDLE events. Waiting for changes...")
+            data: "Subscribed to IDLE events. Waiting for changes..."
         ))
         await session.sendLogNotification(LogMessage(
             level: .info,
             logger: "idle",
-            data: AnyCodable("Watching raw IDLE events on \(watchConfigurations.count) mailbox(es): \(activeTargets)")
+            data: .string("Watching raw IDLE events on \(watchConfigurations.count) mailbox(es): \(activeTargets)")
         ))
 
         let eventStream = watchConfigurations
@@ -1662,11 +1661,11 @@ public actor PostServer {
             await session.sendLogNotification(LogMessage(
                 level: .info,
                 logger: "idle",
-                data: AnyCodable([
-                    "server": rawEvent.serverId,
-                    "mailbox": rawEvent.mailbox,
-                    "event": Self.describeIdleEvent(rawEvent.event)
-                ] as [String: String])
+                data: [
+                    "server": .string(rawEvent.serverId),
+                    "mailbox": .string(rawEvent.mailbox),
+                    "event": .string(Self.describeIdleEvent(rawEvent.event))
+                ]
             ))
         }
     }

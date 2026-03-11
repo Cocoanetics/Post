@@ -15,7 +15,6 @@ import PostServer
 import SwiftMail
 import SwiftMCP
 import SwiftTextHTML
-@preconcurrency import AnyCodable
 
 /// Prints a message to standard error
 private func printError(_ message: String) {
@@ -53,10 +52,10 @@ private final class IdleEventLogger: MCPServerProxyLogNotificationHandling, @unc
             return (server, mailbox, event)
         }
 
-        if let dict = data as? [String: AnyCodable],
-           let server = dict["server"]?.value as? String,
-           let mailbox = dict["mailbox"]?.value as? String,
-           let event = dict["event"]?.value as? String {
+        if let dict = data as? JSONDictionary,
+           let server = dict["server"]?.stringValue,
+           let mailbox = dict["mailbox"]?.stringValue,
+           let event = dict["event"]?.stringValue {
             return (server, mailbox, event)
         }
 
@@ -1694,7 +1693,7 @@ private func setProxyLogLevel(_ level: LogLevel, on proxy: MCPServerProxy) async
         id: UUID().uuidString,
         method: "logging/setLevel",
         params: [
-            "level": AnyCodable(level.rawValue)
+            "level": .string(level.rawValue)
         ]
     )
 
@@ -1834,7 +1833,7 @@ private func loadDotEnvValue(named key: String) -> String? {
 
 private extension MCPServerProxy {
     func setAccessTokenMeta(_ token: String) {
-        meta["accessToken"] = AnyCodable(token)
+        meta["accessToken"] = .string(token)
     }
 }
 
