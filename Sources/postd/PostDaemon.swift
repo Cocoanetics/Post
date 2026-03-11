@@ -44,7 +44,7 @@ extension PostDaemon {
 
         private func launchDetachedProcess() throws {
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+            process.executableURL = Bundle.main.executableURL
             process.arguments = ["start", "--foreground"]
             process.currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 
