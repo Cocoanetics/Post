@@ -727,6 +727,9 @@ public actor PostServer {
 
         guard textBody != nil || htmlBody != nil else { return nil }
 
+        let messageId = messageInfo.messageId?.description
+        let referencesString = messageInfo.references?.map { $0.description }.joined(separator: " ")
+
         let detail = MessageDetail(
             uid: Int(messageInfo.uid?.value ?? 0),
             from: messageInfo.from ?? "Unknown",
@@ -736,7 +739,9 @@ public actor PostServer {
             textBody: textBody,
             htmlBody: htmlBody,
             attachments: [],
-            additionalHeaders: messageInfo.additionalFields
+            additionalHeaders: messageInfo.additionalFields,
+            messageId: messageId,
+            references: referencesString
         )
 
         do {
@@ -1548,7 +1553,9 @@ public actor PostServer {
         cc: String? = nil,
         bcc: String? = nil,
         attachments: String? = nil,
-        mailbox: String? = nil
+        mailbox: String? = nil,
+        inReplyTo: String? = nil,
+        references: String? = nil
     ) async throws -> DraftResult {
         let sender = EmailAddress(address: from)
         let recipients = to.split(separator: ",").map { EmailAddress(address: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }
@@ -1598,7 +1605,17 @@ public actor PostServer {
             }
         }
 
-        let email = Email(
+        var additionalHeaders: [String: String]?
+        if let inReplyTo {
+            additionalHeaders = (additionalHeaders ?? [:])
+            additionalHeaders?["In-Reply-To"] = inReplyTo
+        }
+        if let references {
+            additionalHeaders = (additionalHeaders ?? [:])
+            additionalHeaders?["References"] = references
+        }
+
+        var email = Email(
             sender: sender,
             recipients: recipients,
             ccRecipients: ccRecipients,
@@ -1608,6 +1625,7 @@ public actor PostServer {
             htmlBody: htmlBody,
             attachments: emailAttachments
         )
+        email.additionalHeaders = additionalHeaders
 
         return try await withServer(serverId: serverId) { server in
             _ = try await server.listSpecialUseMailboxes()
@@ -1974,6 +1992,9 @@ public actor PostServer {
             )
         }
 
+        let messageId = message.header.messageId?.description
+        let referencesString = message.header.references?.map { $0.description }.joined(separator: " ")
+
         return MessageDetail(
             uid: messageUID(from: message),
             from: message.from ?? "Unknown",
@@ -1983,7 +2004,9 @@ public actor PostServer {
             textBody: message.textBody,
             htmlBody: message.htmlBody,
             attachments: attachments,
-            additionalHeaders: additionalHeaders ?? message.header.additionalFields
+            additionalHeaders: additionalHeaders ?? message.header.additionalFields,
+            messageId: messageId,
+            references: referencesString
         )
     }
 

@@ -1275,6 +1275,23 @@ extension PostCLI {
                     throw ValidationError("Cannot determine sender address from original message")
                 }
                 
+                // Build threading headers
+                let inReplyTo = original.messageId
+                let references: String?
+                if let originalRefs = original.references, !originalRefs.isEmpty {
+                    // Append original's Message-ID to its References
+                    if let msgId = original.messageId {
+                        references = "\(originalRefs) \(msgId)"
+                    } else {
+                        references = originalRefs
+                    }
+                } else if let msgId = original.messageId {
+                    // If no References, start chain with original's Message-ID
+                    references = msgId
+                } else {
+                    references = nil
+                }
+                
                 // Create the reply draft
                 let attachments = attach.isEmpty ? nil : attach.joined(separator: ",")
                 let result = try await client.createDraft(
@@ -1287,7 +1304,9 @@ extension PostCLI {
                     cc: ccAddresses.isEmpty ? nil : ccAddresses,
                     bcc: nil,
                     attachments: attachments,
-                    mailbox: nil
+                    mailbox: nil,
+                    inReplyTo: inReplyTo,
+                    references: references
                 )
                 
                 if globals.json {
