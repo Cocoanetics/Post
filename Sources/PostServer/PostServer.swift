@@ -513,7 +513,13 @@ public actor PostServer {
         messageInfo: MessageInfo
     ) async -> HookMessagePayload {
         let markdown = await fetchHookMarkdown(using: connection, messageInfo: messageInfo)
-        let decodedAdditionalHeaders = decodeAdditionalHeaders(messageInfo.additionalFields)
+        var decodedAdditionalHeaders = decodeAdditionalHeaders(messageInfo.additionalFields)
+        
+        // Explicitly add Message-ID if available (for threading/deduplication)
+        if let messageId = messageInfo.messageId?.description {
+            decodedAdditionalHeaders["message-id"] = messageId
+        }
+        
         let replyTo = extractReplyTo(from: decodedAdditionalHeaders)
         let decodedFrom = decodeHeaderValue(messageInfo.from ?? header.from)
         let decodedTo = decodeRecipientList(messageInfo.to)
@@ -611,7 +617,13 @@ public actor PostServer {
             }
 
             let markdown = await fetchHookMarkdown(using: connection, messageInfo: messageInfo)
-            let decodedAdditionalHeaders = decodeAdditionalHeaders(messageInfo.additionalFields)
+            var decodedAdditionalHeaders = decodeAdditionalHeaders(messageInfo.additionalFields)
+            
+            // Explicitly add Message-ID if available (for threading/deduplication)
+            if let messageId = messageInfo.messageId?.description {
+                decodedAdditionalHeaders["message-id"] = messageId
+            }
+            
             let replyTo = extractReplyTo(from: decodedAdditionalHeaders)
             let decodedFrom = decodeHeaderValue(messageInfo.from ?? header.from)
             let decodedTo = decodeRecipientList(messageInfo.to)
