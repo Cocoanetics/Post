@@ -257,7 +257,6 @@ extension PostCLI {
             let body: String
             let headers: [String: String]
             let attachments: [AttachmentInfo]?
-            let additionalHeaders: [String: String]?
 
             init(detail: MessageDetail, mailbox: String, formattedBody: String, headers: [String: String]) {
                 self.uid = detail.uid
@@ -269,7 +268,6 @@ extension PostCLI {
                 self.body = formattedBody
                 self.headers = headers
                 self.attachments = detail.attachments.isEmpty ? nil : detail.attachments
-                self.additionalHeaders = detail.additionalHeaders
             }
         }
 
