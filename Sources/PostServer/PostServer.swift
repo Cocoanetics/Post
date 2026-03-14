@@ -513,7 +513,10 @@ public actor PostServer {
         messageInfo: MessageInfo
     ) async -> HookMessagePayload {
         let markdown = await fetchHookMarkdown(using: connection, messageInfo: messageInfo)
-        var decodedAdditionalHeaders = decodeAdditionalHeaders(messageInfo.additionalFields)
+        
+        // Fetch ALL RFC 822 headers explicitly (workaround for SwiftMail not populating additionalFields)
+        let allHeaders = await fetchAllHeaders(using: connection, messageInfo: messageInfo)
+        var decodedAdditionalHeaders = decodeAdditionalHeaders(allHeaders ?? messageInfo.additionalFields)
         
         // Explicitly add Message-ID if available (for threading/deduplication)
         if let messageId = messageInfo.messageId?.description {
@@ -617,7 +620,10 @@ public actor PostServer {
             }
 
             let markdown = await fetchHookMarkdown(using: connection, messageInfo: messageInfo)
-            var decodedAdditionalHeaders = decodeAdditionalHeaders(messageInfo.additionalFields)
+            
+            // Fetch ALL RFC 822 headers explicitly (workaround for SwiftMail not populating additionalFields)
+            let allHeaders = await fetchAllHeaders(using: connection, messageInfo: messageInfo)
+            var decodedAdditionalHeaders = decodeAdditionalHeaders(allHeaders ?? messageInfo.additionalFields)
             
             // Explicitly add Message-ID if available (for threading/deduplication)
             if let messageId = messageInfo.messageId?.description {
@@ -697,6 +703,26 @@ public actor PostServer {
         let isInline = disposition == "inline"
         let isCidOnly = part.contentId != nil && !isAttachment
         return isAttachment || (hasFilename && !isInline && !isCidOnly)
+    }
+
+    /// Fetches ALL RFC 822 headers by fetching the raw message and parsing headers.
+    /// This is a workaround for SwiftMail not populating MessageInfo.additionalFields.
+    private static func fetchAllHeaders(using connection: IMAPNamedConnection, messageInfo: MessageInfo) async -> [String: String]? {
+        do {
+            let rawData: Data
+            if let uid = messageInfo.uid {
+                rawData = try await connection.fetchRawMessage(identifier: uid)
+            } else {
+                rawData = try await connection.fetchRawMessage(identifier: messageInfo.sequenceNumber)
+            }
+            
+            // Parse the message to extract headers
+            let message = try Message(emlData: rawData)
+            return message.header.additionalFields
+        } catch {
+            Self.logDiagnostic("ERROR failed to fetch headers for uid=\(messageInfo.uid?.value ?? 0): \(String(describing: error))")
+            return nil
+        }
     }
 
     /// Produces markdown by fetching only text/html body parts (no attachment download).
