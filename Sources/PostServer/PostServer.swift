@@ -833,13 +833,28 @@ public actor PostServer {
         subject: String,
         date: String
     ) -> [String: String] {
-        var headers = additionalHeaders
+        var headers = filterNoiseHeaders(additionalHeaders)
         if !from.isEmpty { headers["from"] = from }
         if !to.isEmpty { headers["to"] = to.joined(separator: ", ") }
         if let replyTo, !replyTo.isEmpty { headers["reply-to"] = replyTo }
         if !subject.isEmpty { headers["subject"] = subject }
         if !date.isEmpty { headers["date"] = date }
         return headers
+    }
+
+    /// Filters out transport, routing, cryptographic, and ESP tracking headers
+    private static func filterNoiseHeaders(_ headers: [String: String]) -> [String: String] {
+        let excludedPrefixes = [
+            "received", "return-path", "delivered-to",           // Transport/routing
+            "dkim-signature", "arc-",                             // Cryptographic
+            "x-sg-", "x-ses-", "x-hs-", "x-sonic-", "x-ymail-",  // ESP tracking
+            "cfbl-", "x-msg-", "x-pda-", "x-entity-",            // Metadata cruft
+            "mime-version", "content-type", "content-transfer-encoding"  // Redundant (in body structure)
+        ]
+
+        return headers.filter { key, _ in
+            !excludedPrefixes.contains { key.hasPrefix($0) }
+        }
     }
 
     private static func decodeRecipientList(_ recipients: [String]) -> [String] {
@@ -1986,6 +2001,8 @@ public actor PostServer {
         let messageId = message.header.messageId?.description
         let referencesString = message.header.references?.map { $0.description }.joined(separator: " ")
 
+        let filteredHeaders = Self.filterNoiseHeaders(additionalHeaders ?? message.header.additionalFields ?? [:])
+
         return MessageDetail(
             uid: messageUID(from: message),
             from: message.from ?? "Unknown",
@@ -1995,7 +2012,7 @@ public actor PostServer {
             textBody: message.textBody,
             htmlBody: message.htmlBody,
             attachments: attachments,
-            additionalHeaders: additionalHeaders ?? message.header.additionalFields,
+            additionalHeaders: filteredHeaders.isEmpty ? nil : filteredHeaders,
             messageId: messageId,
             references: referencesString
         )
