@@ -1951,31 +1951,7 @@ public actor PostServer {
     }
 
     private func fetchAdditionalHeaders(for message: Message, using server: IMAPServer) async -> [String: String]? {
-        if let additional = message.header.additionalFields, !additional.isEmpty {
-            return additional
-        }
-
-        if let uid = message.uid,
-           let info = try? await server.fetchMessageInfo(for: uid),
-           let fields = info.additionalFields,
-           !fields.isEmpty {
-            return fields
-        }
-
-        let rawData: Data?
-        if let uid = message.uid {
-            rawData = try? await server.fetchRawMessage(identifier: uid)
-        } else {
-            rawData = try? await server.fetchRawMessage(identifier: message.sequenceNumber)
-        }
-
-        if let rawData,
-           let parsed = try? Message(emlData: rawData),
-           let fields = parsed.header.additionalFields,
-           !fields.isEmpty {
-            return fields
-        }
-
+        // SwiftMail 1.3.1+ populates additionalFields during fetchMessages
         return message.header.additionalFields
     }
 
