@@ -1,5 +1,5 @@
 {
-  "originHash" : "1c1c9bc1844a104e5410bca3dd5fb59dec2dc058b2bc42b4ed0bebe5c79ea0d0",
+  "originHash" : "be8cbcca4966303e64334a9c1e7eb6b94e6daf2b8e77ee22df1397aa6e615169",
   "pins" : [
     {
       "identity" : "swift-argument-parser",
@@ -132,8 +132,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftMail",
       "state" : {
-        "revision" : "1966b29dfea615deddd6caf46939c9793c6fd6f7",
-        "version" : "1.3.1"
+        "revision" : "d8c5bb83bb02d9b2a210b2c7ff5530a11d5bf79a",
+        "version" : "1.3.2"
       }
     },
     {
