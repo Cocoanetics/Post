@@ -236,7 +236,7 @@ extension PostCLI {
         ) async -> [String: String] {
             let decoded = decodeFetchHeaders(message.additionalHeaders)
             if !decoded.isEmpty {
-                return decoded
+                return filterHeaders(decoded)
             }
 
             guard let emlData = try? await client.downloadEml(serverId: serverId, uid: message.uid, mailbox: mailbox),
@@ -244,7 +244,22 @@ extension PostCLI {
                 return decoded
             }
 
-            return decodeFetchHeaders(parseAdditionalHeaders(from: emlData))
+            return filterHeaders(decodeFetchHeaders(parseAdditionalHeaders(from: emlData)))
+        }
+
+        /// Filters out transport, routing, cryptographic, and ESP tracking headers
+        private func filterHeaders(_ headers: [String: String]) -> [String: String] {
+            let excludedPrefixes = [
+                "received", "return-path", "delivered-to",           // Transport/routing
+                "dkim-signature", "arc-",                             // Cryptographic
+                "x-sg-", "x-ses-", "x-hs-", "x-sonic-", "x-ymail-",  // ESP tracking
+                "cfbl-", "x-msg-", "x-pda-", "x-entity-",            // Metadata cruft
+                "mime-version", "content-type", "content-transfer-encoding"  // Redundant (in body structure)
+            ]
+
+            return headers.filter { key, _ in
+                !excludedPrefixes.contains { key.hasPrefix($0) }
+            }
         }
 
         struct FormattedMessage: Codable {
