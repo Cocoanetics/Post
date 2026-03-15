@@ -21,7 +21,7 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.0.0")),
+        .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.2.1")),
         .package(url: "https://github.com/Cocoanetics/SwiftMail", .upToNextMajor(from: "1.3.2")),
         .package(url: "https://github.com/Cocoanetics/SwiftText", .upToNextMajor(from: "1.0.0")),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
