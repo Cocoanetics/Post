@@ -1350,10 +1350,11 @@ extension PostCLI {
             // Build quote header (will be inside blockquote)
             let quoteHeader = "> On \(dateString), \(original.from) wrote:"
             
-            // Quote the body (each line prefixed with "> ")
+            // Quote the body with paragraph breaks preserved
+            // Use <br><br> for empty lines to create visual paragraph breaks in HTML
             let bodyLines = markdown.components(separatedBy: "\n")
             let quotedLines = bodyLines.map { line in
-                line.isEmpty ? ">" : "> \(line)"
+                line.isEmpty ? "> <br>" : "> \(line)"
             }
             
             // Combine: two blank lines (for empty paragraphs) + quoted header + blank quote line + quoted body
