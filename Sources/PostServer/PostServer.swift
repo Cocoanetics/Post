@@ -1734,7 +1734,10 @@ public actor PostServer {
         color: #666;
     }
     blockquote p {
-        margin: 0;
+        margin: 0.5em 0 0 0;
+    }
+    blockquote p:first-child {
+        margin-top: 0;
     }
     code {
         background: #f5f5f5;
