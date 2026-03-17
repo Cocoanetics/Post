@@ -1151,14 +1151,14 @@ extension PostCLI {
     struct Draft: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Create a new email draft")
 
-        @Option(name: .long, help: "Sender email address")
-        var from: String
+        @Option(name: .long, help: "Sender email address (auto-derived from original when using --replying-to)")
+        var from: String?
 
-        @Option(name: .long, help: "Comma-separated recipient addresses")
-        var to: String
+        @Option(name: .long, help: "Comma-separated recipient addresses (auto-derived from original when using --replying-to)")
+        var to: String?
 
-        @Option(name: .long, help: "Email subject")
-        var subject: String
+        @Option(name: .long, help: "Email subject (auto-derived from original when using --replying-to)")
+        var subject: String?
 
         @Option(
             name: .long,
@@ -1206,9 +1206,12 @@ extension PostCLI {
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 let attachments = attach.isEmpty ? nil : attach.joined(separator: ",")
 
-                // Resolve reply threading headers if --replying-to is set
+                // Resolve reply threading headers and auto-derive fields if --replying-to is set
                 var inReplyTo: String? = nil
                 var references: String? = nil
+                var derivedFrom: String? = nil
+                var derivedTo: String? = nil
+                var derivedSubject: String? = nil
 
                 if let replyUID = replyingTo {
                     let sourceMailbox = replyMailbox ?? "INBOX"
@@ -1222,6 +1225,7 @@ extension PostCLI {
                         throw ValidationError("Message UID \(replyUID) not found in mailbox '\(sourceMailbox)'")
                     }
 
+                    // Threading headers
                     inReplyTo = original.messageId
 
                     if let originalRefs = original.references, !originalRefs.isEmpty {
@@ -1233,13 +1237,44 @@ extension PostCLI {
                     } else if let msgId = original.messageId {
                         references = msgId
                     }
+
+                    // Auto-derive from, to, subject if not explicitly provided
+                    if from == nil {
+                        derivedFrom = original.to.first
+                        guard derivedFrom != nil else {
+                            throw ValidationError("Cannot auto-derive sender from original message (no recipient found)")
+                        }
+                    }
+
+                    if to == nil {
+                        derivedTo = original.from
+                    }
+
+                    if subject == nil {
+                        derivedSubject = original.subject.hasPrefix("Re: ") ? original.subject : "Re: \(original.subject)"
+                    }
+                }
+
+                // Validate required fields
+                let finalFrom = from ?? derivedFrom
+                let finalTo = to ?? derivedTo
+                let finalSubject = subject ?? derivedSubject
+
+                guard let fromAddress = finalFrom else {
+                    throw ValidationError("Missing required option '--from' (cannot auto-derive without --replying-to)")
+                }
+                guard let toAddress = finalTo else {
+                    throw ValidationError("Missing required option '--to' (cannot auto-derive without --replying-to)")
+                }
+                guard let subjectText = finalSubject else {
+                    throw ValidationError("Missing required option '--subject' (cannot auto-derive without --replying-to)")
                 }
 
                 let result = try await client.createDraft(
                     serverId: serverId,
-                    from: from,
-                    to: to,
-                    subject: subject,
+                    from: fromAddress,
+                    to: toAddress,
+                    subject: subjectText,
                     body: body,
                     format: format,
                     cc: cc,
