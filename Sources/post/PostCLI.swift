@@ -1200,16 +1200,6 @@ extension PostCLI {
                 throw ValidationError("Missing required option '--body' (omit only when using --replying-to for inline editing)")
             }
 
-            let format: PostServer.BodyFormat
-            switch detectDraftBodyInputFormat(body ?? "") {
-            case .html:
-                format = .html
-            case .markdown:
-                format = .markdown
-            case .plainText:
-                format = .text
-            }
-
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 let attachments = attach.isEmpty ? nil : attach.joined(separator: ",")
@@ -1301,12 +1291,24 @@ extension PostCLI {
                     throw ValidationError("Missing required option '--subject' (cannot auto-derive without --replying-to)")
                 }
 
+                // Resolve final body and detect format
+                let finalBody = body ?? derivedBody ?? ""
+                let format: PostServer.BodyFormat
+                switch detectDraftBodyInputFormat(finalBody) {
+                case .html:
+                    format = .html
+                case .markdown:
+                    format = .markdown
+                case .plainText:
+                    format = .text
+                }
+
                 let result = try await client.createDraft(
                     serverId: serverId,
                     from: fromAddress,
                     to: toAddress,
                     subject: subjectText,
-                    body: body ?? derivedBody ?? "",  // Use provided body, or auto-quoted, or empty
+                    body: finalBody,
                     format: format,
                     cc: cc ?? derivedCC,
                     bcc: bcc,
