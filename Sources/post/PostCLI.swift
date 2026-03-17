@@ -1358,7 +1358,7 @@ extension PostCLI {
             }
             
             // Combine: two blank lines (for empty paragraphs) + quoted header + blank quote line + quoted body
-            return " \n \n\(quoteHeader)\n>\n\(quotedLines.joined(separator: "\n"))"
+            return "\n\n\(quoteHeader)\n>\n\(quotedLines.joined(separator: "\n"))"
         }
     }
 
