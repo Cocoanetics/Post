@@ -1162,10 +1162,10 @@ extension PostCLI {
 
         @Option(
             name: .long,
-            help: "Body text or file path. Existing files are read; inline values decode escapes and auto-detect as HTML, Markdown, or plain text.",
+            help: "Body text or file path. Existing files are read; inline values decode escapes and auto-detect as HTML, Markdown, or plain text. Optional when using --replying-to (creates empty draft for inline editing).",
             transform: resolveDraftBodyInputForCLI
         )
-        var body: String
+        var body: String?
 
         @Option(name: .long, help: "Comma-separated CC addresses")
         var cc: String?
@@ -1195,8 +1195,13 @@ extension PostCLI {
         var globals: GlobalOptions
 
         func run() async throws {
+            // Validate: body is required unless --replying-to is used
+            guard body != nil || replyingTo != nil else {
+                throw ValidationError("Missing required option '--body' (omit only when using --replying-to for inline editing)")
+            }
+
             let format: PostServer.BodyFormat
-            switch detectDraftBodyInputFormat(body) {
+            switch detectDraftBodyInputFormat(body ?? "") {
             case .html:
                 format = .html
             case .markdown:
@@ -1294,7 +1299,7 @@ extension PostCLI {
                     from: fromAddress,
                     to: toAddress,
                     subject: subjectText,
-                    body: body,
+                    body: body ?? "",  // Empty body for inline editing
                     format: format,
                     cc: cc ?? derivedCC,
                     bcc: bcc,

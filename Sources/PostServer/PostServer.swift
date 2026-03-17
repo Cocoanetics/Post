@@ -1724,7 +1724,6 @@ public actor PostServer {
     private static let emailStylesheet = """
     body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-        font-size: 14px;
         line-height: 1.6;
         color: #333;
     }
