@@ -113,7 +113,6 @@ struct PostCLI: AsyncParsableCommand {
             Quota.self,
             Attachment.self,
             Draft.self,
-            Reply.self,
             PDF.self,
             Idle.self
         ]
@@ -1183,6 +1182,12 @@ extension PostCLI {
         @Option(name: .long, help: "Target mailbox (default: server's Drafts folder)")
         var mailbox: String?
 
+        @Option(name: .long, help: "UID of an existing message to reply to (sets In-Reply-To and References headers)")
+        var replyingTo: Int?
+
+        @Option(name: .long, help: "Mailbox containing the message referenced by --replying-to (default: INBOX)")
+        var replyMailbox: String?
+
         @OptionGroup
         var globals: GlobalOptions
 
@@ -1200,6 +1205,36 @@ extension PostCLI {
             try await withClient { client in
                 let serverId = try await resolveServerID(explicit: server, client: client)
                 let attachments = attach.isEmpty ? nil : attach.joined(separator: ",")
+
+                // Resolve reply threading headers if --replying-to is set
+                var inReplyTo: String? = nil
+                var references: String? = nil
+
+                if let replyUID = replyingTo {
+                    let sourceMailbox = replyMailbox ?? "INBOX"
+                    let messages = try await client.fetchMessage(
+                        serverId: serverId,
+                        uids: String(replyUID),
+                        mailbox: sourceMailbox
+                    )
+
+                    guard let original = messages.first else {
+                        throw ValidationError("Message UID \(replyUID) not found in mailbox '\(sourceMailbox)'")
+                    }
+
+                    inReplyTo = original.messageId
+
+                    if let originalRefs = original.references, !originalRefs.isEmpty {
+                        if let msgId = original.messageId {
+                            references = "\(originalRefs) \(msgId)"
+                        } else {
+                            references = originalRefs
+                        }
+                    } else if let msgId = original.messageId {
+                        references = msgId
+                    }
+                }
+
                 let result = try await client.createDraft(
                     serverId: serverId,
                     from: from,
@@ -1210,7 +1245,9 @@ extension PostCLI {
                     cc: cc,
                     bcc: bcc,
                     attachments: attachments,
-                    mailbox: mailbox
+                    mailbox: mailbox,
+                    inReplyTo: inReplyTo,
+                    references: references
                 )
                 if globals.json {
                     outputJSON(result)
@@ -1222,152 +1259,6 @@ extension PostCLI {
                     print("Draft created in '\(result.mailbox)'.")
                 }
             }
-        }
-    }
-
-    struct Reply: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Create a reply draft to an existing message")
-
-        @Argument(help: "UID of the message to reply to")
-        var uid: Int
-
-        @Option(name: .long, help: "Reply text body (will be placed before quoted original; omit to create empty draft for inline editing)")
-        var body: String?
-
-        @ArgumentParser.Flag(name: .long, help: "Reply-all to all recipients")
-        var all: Bool = false
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Source mailbox containing the original message")
-        var mailbox: String = "INBOX"
-
-        @Option(name: .long, help: "Comma-separated CC addresses (optional, only for reply-all)")
-        var cc: String?
-
-        @Option(name: .long, parsing: .upToNextOption, help: "File paths or glob patterns to attach (repeatable)")
-        var attach: [String] = []
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func run() async throws {
-            try await withClient(quiet: globals.json) { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                
-                // Fetch the original message
-                let messages = try await client.fetchMessage(
-                    serverId: serverId,
-                    uids: String(uid),
-                    mailbox: mailbox
-                )
-                
-                guard let original = messages.first else {
-                    throw ValidationError("Message UID \(uid) not found in \(mailbox)")
-                }
-                
-                // Format the reply
-                let replySubject = original.subject.hasPrefix("Re: ") ? original.subject : "Re: \(original.subject)"
-                let quotedBody = try await formatQuotedReply(original: original)
-                
-                // If body is provided, place it before the quote; otherwise just the quote (for inline editing)
-                let fullBody: String
-                if let replyText = body, !replyText.isEmpty {
-                    fullBody = "\(replyText)\n\(quotedBody)"
-                } else {
-                    fullBody = quotedBody
-                }
-                
-                // Determine recipients
-                let toAddress = original.from
-                let ccAddresses = all ? original.to.filter({ $0 != toAddress }).joined(separator: ",") : (cc ?? "")
-                
-                // Get sender from original "to" (user's address)
-                guard let fromAddress = original.to.first else {
-                    throw ValidationError("Cannot determine sender address from original message")
-                }
-                
-                // Build threading headers
-                let inReplyTo = original.messageId
-                let references: String?
-                if let originalRefs = original.references, !originalRefs.isEmpty {
-                    // Append original's Message-ID to its References
-                    if let msgId = original.messageId {
-                        references = "\(originalRefs) \(msgId)"
-                    } else {
-                        references = originalRefs
-                    }
-                } else if let msgId = original.messageId {
-                    // If no References, start chain with original's Message-ID
-                    references = msgId
-                } else {
-                    references = nil
-                }
-                
-                // Create the reply draft
-                let attachments = attach.isEmpty ? nil : attach.joined(separator: ",")
-                let result = try await client.createDraft(
-                    serverId: serverId,
-                    from: fromAddress,
-                    to: toAddress,
-                    subject: replySubject,
-                    body: fullBody,
-                    format: .text,
-                    cc: ccAddresses.isEmpty ? nil : ccAddresses,
-                    bcc: nil,
-                    attachments: attachments,
-                    mailbox: nil,
-                    inReplyTo: inReplyTo,
-                    references: references
-                )
-                
-                if globals.json {
-                    outputJSON(result)
-                    return
-                }
-                if let draftUID = result.uid {
-                    print("Reply draft created in '\(result.mailbox)' (UID \(draftUID)).")
-                } else {
-                    print("Reply draft created in '\(result.mailbox)'.")
-                }
-            }
-        }
-        
-        private func formatQuotedReply(original: MessageDetail) async throws -> String {
-            // Get markdown body
-            let body = try await original.markdown()
-            
-            return formatQuotedBody(from: original.from, date: original.date, body: body)
-        }
-        
-        private func formatQuotedBody(from: String, date: String, body: String) -> String {
-            // Parse the date from ISO8601 and format as German DD.MM.YYYY, HH:MM
-            let dateFormatter = ISO8601DateFormatter()
-            dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            
-            let germanFormatter = DateFormatter()
-            germanFormatter.dateFormat = "dd.MM.yyyy, 'at' HH:mm"
-            germanFormatter.locale = Locale(identifier: "en_US")
-            
-            let dateString: String
-            if let parsedDate = dateFormatter.date(from: date) {
-                dateString = germanFormatter.string(from: parsedDate)
-            } else {
-                dateString = date
-            }
-            
-            // Build quote header: "> On DD.MM.YYYY, at HH:MM, sender@email.com wrote:"
-            let quoteHeader = "> On \(dateString), \(from) wrote:"
-            
-            // Quote the body (each line prefixed with "> ")
-            let bodyLines = body.components(separatedBy: "\n")
-            let quotedLines = bodyLines.map { line in
-                line.isEmpty ? ">" : "> \(line)"
-            }
-            
-            // Combine: header + blank quote line + quoted body
-            return "\(quoteHeader)\n>\n\(quotedLines.joined(separator: "\n"))"
         }
     }
 

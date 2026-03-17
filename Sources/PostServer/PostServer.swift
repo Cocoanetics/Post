@@ -1733,6 +1733,9 @@ public actor PostServer {
         padding: 0.25em 0 0.25em 1em;
         color: #666;
     }
+    blockquote p {
+        margin: 0;
+    }
     code {
         background: #f5f5f5;
         border: 1px solid #ddd;
