@@ -1271,8 +1271,7 @@ extension PostCLI {
 
                     // Auto-quote original when body is omitted (like Mail.app Reply behavior)
                     if body == nil {
-                        let quotedBody = try await formatQuotedReply(original: original)
-                        derivedBody = "\n\n\(quotedBody)"  // Empty line + quoted original
+                        derivedBody = try await formatQuotedReply(original: original)
                     }
                 }
 
@@ -1348,8 +1347,8 @@ extension PostCLI {
                 dateString = original.date
             }
             
-            // Build quote header: "On DD.MM.YYYY, at HH:MM, sender@email.com wrote:"
-            let quoteHeader = "On \(dateString), \(original.from) wrote:"
+            // Build quote header (will be inside blockquote)
+            let quoteHeader = "> On \(dateString), \(original.from) wrote:"
             
             // Quote the body (each line prefixed with "> ")
             let bodyLines = markdown.components(separatedBy: "\n")
@@ -1357,8 +1356,8 @@ extension PostCLI {
                 line.isEmpty ? ">" : "> \(line)"
             }
             
-            // Combine: header + blank quote line + quoted body
-            return "\(quoteHeader)\n>\n\(quotedLines.joined(separator: "\n"))"
+            // Combine: two blank lines (for empty paragraphs) + quoted header + blank quote line + quoted body
+            return " \n \n\(quoteHeader)\n>\n\(quotedLines.joined(separator: "\n"))"
         }
     }
 
