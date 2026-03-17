@@ -749,6 +749,7 @@ public actor PostServer {
             uid: Int(messageInfo.uid?.value ?? 0),
             from: messageInfo.from ?? "Unknown",
             to: messageInfo.to,
+            cc: messageInfo.cc.isEmpty ? nil : messageInfo.cc,
             subject: messageInfo.subject ?? "(No Subject)",
             date: formatHookDate(messageInfo.date),
             textBody: textBody,
@@ -1723,7 +1724,6 @@ public actor PostServer {
     private static let emailStylesheet = """
     body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-        font-size: 14px;
         line-height: 1.6;
         color: #333;
     }
@@ -1732,6 +1732,12 @@ public actor PostServer {
         margin: 0.5em 0;
         padding: 0.25em 0 0.25em 1em;
         color: #666;
+    }
+    blockquote p {
+        margin: 0.5em 0 0 0;
+    }
+    blockquote p:first-child {
+        margin-top: 0;
     }
     code {
         background: #f5f5f5;
@@ -2007,6 +2013,7 @@ public actor PostServer {
             uid: messageUID(from: message),
             from: message.from ?? "Unknown",
             to: message.to,
+            cc: message.cc.isEmpty ? nil : message.cc,
             subject: message.subject ?? "(No Subject)",
             date: formatDate(message.date),
             textBody: message.textBody,

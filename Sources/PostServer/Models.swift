@@ -41,6 +41,7 @@ public struct MessageDetail: Codable, Sendable {
     public let uid: Int
     public let from: String
     public let to: [String]
+    public let cc: [String]?
     public let subject: String
     public let date: String
     public let textBody: String?
@@ -57,6 +58,7 @@ public struct MessageDetail: Codable, Sendable {
         uid: Int,
         from: String,
         to: [String],
+        cc: [String]? = nil,
         subject: String,
         date: String,
         textBody: String?,
@@ -69,6 +71,7 @@ public struct MessageDetail: Codable, Sendable {
         self.uid = uid
         self.from = from
         self.to = to
+        self.cc = cc
         self.subject = subject
         self.date = date
         self.textBody = textBody
