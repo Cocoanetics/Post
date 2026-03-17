@@ -1188,6 +1188,9 @@ extension PostCLI {
         @Option(name: .long, help: "Mailbox containing the message referenced by --replying-to (default: INBOX)")
         var replyMailbox: String?
 
+        @ArgumentParser.Flag(name: .long, help: "Reply-all: include all original recipients in CC (only with --replying-to)")
+        var replyAll: Bool = false
+
         @OptionGroup
         var globals: GlobalOptions
 
@@ -1212,6 +1215,7 @@ extension PostCLI {
                 var derivedFrom: String? = nil
                 var derivedTo: String? = nil
                 var derivedSubject: String? = nil
+                var derivedCC: String? = nil
 
                 if let replyUID = replyingTo {
                     let sourceMailbox = replyMailbox ?? "INBOX"
@@ -1253,6 +1257,21 @@ extension PostCLI {
                     if subject == nil {
                         derivedSubject = original.subject.hasPrefix("Re: ") ? original.subject : "Re: \(original.subject)"
                     }
+
+                    // Handle reply-all: include all original recipients in CC (except sender and primary recipient)
+                    if replyAll && cc == nil {
+                        let allRecipients = original.to + (original.cc ?? [])
+                        let excludeSender = derivedFrom ?? from ?? ""
+                        let excludePrimary = derivedTo ?? to ?? ""
+                        
+                        let ccAddresses = allRecipients.filter { recipient in
+                            recipient != excludeSender && recipient != excludePrimary
+                        }
+                        
+                        if !ccAddresses.isEmpty {
+                            derivedCC = ccAddresses.joined(separator: ", ")
+                        }
+                    }
                 }
 
                 // Validate required fields
@@ -1277,7 +1296,7 @@ extension PostCLI {
                     subject: subjectText,
                     body: body,
                     format: format,
-                    cc: cc,
+                    cc: cc ?? derivedCC,
                     bcc: bcc,
                     attachments: attachments,
                     mailbox: mailbox,
