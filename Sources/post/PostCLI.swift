@@ -1354,7 +1354,7 @@ extension PostCLI {
             // Use plain text to keep blank lines (HTML-to-Markdown collapses them)
             let bodyLines = plainText.components(separatedBy: "\n")
             let quotedLines = bodyLines.map { line in
-                line.isEmpty ? "> <br>" : "> \(line)"
+                line.isEmpty ? ">" : "> \(line)"
             }
             
             // Combine: two blank lines (for empty paragraphs) + quoted header + blank quote line + quoted body
