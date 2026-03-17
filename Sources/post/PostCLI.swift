@@ -1221,6 +1221,7 @@ extension PostCLI {
                 var derivedTo: String? = nil
                 var derivedSubject: String? = nil
                 var derivedCC: String? = nil
+                var derivedBody: String? = nil
 
                 if let replyUID = replyingTo {
                     let sourceMailbox = replyMailbox ?? "INBOX"
@@ -1277,6 +1278,12 @@ extension PostCLI {
                             derivedCC = ccAddresses.joined(separator: ", ")
                         }
                     }
+
+                    // Auto-quote original when body is omitted (like Mail.app Reply behavior)
+                    if body == nil {
+                        let quotedBody = try await formatQuotedReply(original: original)
+                        derivedBody = "\n\n\(quotedBody)"  // Empty line + quoted original
+                    }
                 }
 
                 // Validate required fields
@@ -1299,7 +1306,7 @@ extension PostCLI {
                     from: fromAddress,
                     to: toAddress,
                     subject: subjectText,
-                    body: body ?? "",  // Empty body for inline editing
+                    body: body ?? derivedBody ?? "",  // Use provided body, or auto-quoted, or empty
                     format: format,
                     cc: cc ?? derivedCC,
                     bcc: bcc,
@@ -1318,6 +1325,38 @@ extension PostCLI {
                     print("Draft created in '\(result.mailbox)'.")
                 }
             }
+        }
+
+        private func formatQuotedReply(original: MessageDetail) async throws -> String {
+            // Get markdown body from original
+            let markdown = try await original.markdown()
+            
+            // Format attribution header
+            let dateFormatter = ISO8601DateFormatter()
+            dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            
+            let germanFormatter = DateFormatter()
+            germanFormatter.dateFormat = "dd.MM.yyyy, 'at' HH:mm"
+            germanFormatter.locale = Locale(identifier: "en_US")
+            
+            let dateString: String
+            if let parsedDate = dateFormatter.date(from: original.date) {
+                dateString = germanFormatter.string(from: parsedDate)
+            } else {
+                dateString = original.date
+            }
+            
+            // Build quote header: "On DD.MM.YYYY, at HH:MM, sender@email.com wrote:"
+            let quoteHeader = "On \(dateString), \(original.from) wrote:"
+            
+            // Quote the body (each line prefixed with "> ")
+            let bodyLines = markdown.components(separatedBy: "\n")
+            let quotedLines = bodyLines.map { line in
+                line.isEmpty ? ">" : "> \(line)"
+            }
+            
+            // Combine: header + blank quote line + quoted body
+            return "\(quoteHeader)\n>\n\(quotedLines.joined(separator: "\n"))"
         }
     }
 
