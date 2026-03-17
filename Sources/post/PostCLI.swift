@@ -1329,8 +1329,8 @@ extension PostCLI {
         }
 
         private func formatQuotedReply(original: MessageDetail) async throws -> String {
-            // Use plain text body to preserve paragraph breaks (HTML-to-Markdown collapses them)
-            let plainText = original.textBody ?? ""
+            // Use HTML→Markdown conversion (preserves formatting better than plain text)
+            let markdown = try await original.markdown()
             
             // Format attribution header
             let dateFormatter = ISO8601DateFormatter()
@@ -1351,8 +1351,7 @@ extension PostCLI {
             let quoteHeader = "> On \(dateString), \(original.from) wrote:"
             
             // Quote the body with paragraph breaks preserved
-            // Use plain text to keep blank lines (HTML-to-Markdown collapses them)
-            let bodyLines = plainText.components(separatedBy: "\n")
+            let bodyLines = markdown.components(separatedBy: "\n")
             let quotedLines = bodyLines.map { line in
                 line.isEmpty ? ">" : "> \(line)"
             }
