@@ -110,52 +110,48 @@ extension PostCLI {
                     afterUid: afterUid
                 )
                 if globals.json {
-                    struct SearchJSONOutput: Codable {
-                        let count: Int?
-                        let min: Int?
-                        let max: Int?
+                    struct PageOutput: Codable {
                         let returned: Int
-                        let returnedMin: Int?
-                        let returnedMax: Int?
                         let hasMore: Bool
-                        let nextCommand: String?
+                        let next: NextOutput?
+                    }
+                    
+                    struct NextOutput: Codable {
+                        let afterUid: Int
+                    }
+                    
+                    struct SearchJSONOutput: Codable {
+                        let total: Int?
                         let messages: [JSONMessageHeader]
+                        let page: PageOutput
                     }
 
                     let output = SearchJSONOutput(
-                        count: result.count,
-                        min: result.min,
-                        max: result.max,
-                        returned: result.returned,
-                        returnedMin: result.returnedMin,
-                        returnedMax: result.returnedMax,
-                        hasMore: result.hasMore,
-                        nextCommand: (result.hasMore && result.returnedMax != nil)
-                            ? "post search --server \(serverId) --mailbox \(mailbox)\(from.map { " --from \($0)" } ?? "")\(subject.map { " --subject \($0)" } ?? "")\(text.map { " --text \($0)" } ?? "")\(since.map { " --since \($0)" } ?? "")\(before.map { " --before \($0)" } ?? "")\(header.map { " --header \($0)" } ?? "")\(messageId.map { " --message-id \($0)" } ?? "")\(unseen ? " --unseen" : "")\(seen ? " --seen" : "")\(flagged ? " --flagged" : "")\(unflagged ? " --unflagged" : "") --limit \(limit) --after-uid \(result.returnedMax!)"
-                            : nil,
-                        messages: result.messages.map(JSONMessageHeader.init)
+                        total: result.total,
+                        messages: result.messages.map(JSONMessageHeader.init),
+                        page: PageOutput(
+                            returned: result.page.returned,
+                            hasMore: result.page.hasMore,
+                            next: result.page.next.map { NextOutput(afterUid: $0.afterUid) }
+                        )
                     )
                     outputJSON(output)
                     return
                 }
                 
                 // Plain text output
-                if let count = result.count, let min = result.min, let max = result.max {
-                    print("Found \(count) message(s) (UIDs \(min)-\(max))")
+                if let total = result.total {
+                    print("Found \(total) message(s)")
                 }
-                print("Showing \(result.returned) result(s)", terminator: "")
-                if let returnedMin = result.returnedMin, let returnedMax = result.returnedMax {
-                    print(" (UIDs \(returnedMin)-\(returnedMax))", terminator: "")
-                }
-                print(":")
+                print("Showing \(result.page.returned) result(s)")
                 print()
                 
                 printMessageHeaders(result.messages)
                 
                 // Show next page hint
-                if result.hasMore, let returnedMax = result.returnedMax {
+                if let next = result.page.next {
                     print()
-                    print("To see more: post search --server \(serverId) --mailbox \(mailbox) --limit \(limit) --after-uid \(returnedMax)")
+                    print("To see more: post search --server \(serverId) --mailbox \(mailbox) --limit \(limit) --after-uid \(next.afterUid)")
                 }
             }
         }

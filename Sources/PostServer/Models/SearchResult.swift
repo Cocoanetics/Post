@@ -1,50 +1,49 @@
 import Foundation
 import SwiftMCP
 
+/// Pagination cursor for next page
+@Schema
+public struct SearchResultNext: Codable, Sendable {
+    public let afterUid: Int
+    
+    public init(afterUid: Int) {
+        self.afterUid = afterUid
+    }
+}
+
+/// Pagination metadata
+@Schema
+public struct SearchResultPage: Codable, Sendable {
+    public let returned: Int
+    public let hasMore: Bool
+    public let next: SearchResultNext?
+    
+    public init(returned: Int, hasMore: Bool, next: SearchResultNext?) {
+        self.returned = returned
+        self.hasMore = hasMore
+        self.next = next
+    }
+}
+
 /// Result of a search operation with pagination metadata
 @Schema
 public struct SearchResult: Codable, Sendable {
     /// Total number of messages matching the search criteria
-    public let count: Int?
-    
-    /// Lowest UID in the full result set
-    public let min: Int?
-    
-    /// Highest UID in the full result set
-    public let max: Int?
-    
-    /// Number of messages returned in this response
-    public let returned: Int
-    
-    /// Lowest UID in the returned subset
-    public let returnedMin: Int?
-    
-    /// Highest UID in the returned subset
-    public let returnedMax: Int?
-    
-    /// Whether there are more results available
-    public let hasMore: Bool
+    public let total: Int?
     
     /// The actual message headers
     public let messages: [MessageHeader]
     
+    /// Pagination metadata
+    public let page: SearchResultPage
+    
     public init(
-        count: Int?,
-        min: Int?,
-        max: Int?,
-        returned: Int,
-        returnedMin: Int?,
-        returnedMax: Int?,
-        hasMore: Bool,
-        messages: [MessageHeader]
+        total: Int?,
+        messages: [MessageHeader],
+        page: SearchResultPage
     ) {
-        self.count = count
-        self.min = min
-        self.max = max
-        self.returned = returned
-        self.returnedMin = returnedMin
-        self.returnedMax = returnedMax
-        self.hasMore = hasMore
+        self.total = total
         self.messages = messages
+        self.page = page
     }
 }
