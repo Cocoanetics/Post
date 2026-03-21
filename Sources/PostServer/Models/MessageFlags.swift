@@ -43,7 +43,9 @@ public struct MessageFlags: Codable, Sendable {
             flags[flaggedIndex] = "Flagged:\(color.rawValue.capitalized)"
         }
         
-        return flags
+        // Deduplicate while preserving order
+        var seen = Set<String>()
+        return flags.filter { seen.insert($0).inserted }
     }
     
     /// Access count
@@ -127,7 +129,11 @@ public struct MessageFlags: Codable, Sendable {
             flags[flaggedIndex] = "Flagged:\(color.rawValue.capitalized)"
         }
         
-        try container.encode(flags)
+        // Deduplicate while preserving order
+        var seen = Set<String>()
+        let deduplicated = flags.filter { seen.insert($0).inserted }
+        
+        try container.encode(deduplicated)
     }
     
     // MARK: - Flag Conversion
@@ -145,11 +151,14 @@ public struct MessageFlags: Codable, Sendable {
             if value.hasPrefix("$MailFlagBit") {
                 // These are encoded in the color property, skip them
                 return value  // Will be filtered later
-            } else if value == "$Junk" {
-                return "Junk"
-            } else if value == "$NotJunk" || value == "NotJunk" {
-                return "NotJunk"
-            } else {
+            }
+            
+            // Normalize junk-related flags
+            switch value {
+            case "$Junk": return "Junk"
+            case "$NotJunk", "NotJunk": return "NotJunk"
+            case "JunkRecorded": return "JunkRecorded"  // Server metadata
+            default:
                 // Strip dollar sign from other custom flags
                 return value.hasPrefix("$") ? String(value.dropFirst()) : value
             }
