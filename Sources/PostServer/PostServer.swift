@@ -233,6 +233,7 @@ public actor PostServer {
         }
     }
 
+    /// Lists all configured IMAP servers with their connection details
     @MCPTool
     public func listServers() async throws -> [ServerInfo] {
         let infos = await connectionManager.serverInfos()
