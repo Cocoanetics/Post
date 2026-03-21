@@ -451,21 +451,14 @@ public actor PostServer {
 
             // Extract metadata
             let totalCount = result.count
-            let minUID = result.min.map { Int($0.value) }
-            let maxUID = result.max.map { Int($0.value) }
             
             // Get the limited UIDs
             guard !limitedUIDs.isEmpty else {
                 // No results
                 return SearchResult(
-                    count: totalCount,
-                    min: minUID,
-                    max: maxUID,
-                    returned: 0,
-                    returnedMin: nil,
-                    returnedMax: nil,
-                    hasMore: false,
-                    messages: []
+                    total: totalCount,
+                    messages: [],
+                    page: SearchResultPage(returned: 0, hasMore: false, next: nil)
                 )
             }
 
@@ -476,26 +469,20 @@ public actor PostServer {
             
             // Calculate returned range
             let returnedUIDs = sortedHeaders.map(\.uid)
-            let returnedMin = returnedUIDs.min()
             let returnedMax = returnedUIDs.max()
             
-            // Check if there are more results
-            let hasMore: Bool
-            if let maxUID, let returnedMax {
-                hasMore = returnedMax < maxUID
-            } else {
-                hasMore = false
-            }
+            // Check if there are more results and prepare next cursor
+            let hasMore = limitedUIDs.count == limit
+            let next = hasMore && returnedMax != nil ? SearchResultNext(afterUid: returnedMax!) : nil
 
             return SearchResult(
-                count: totalCount,
-                min: minUID,
-                max: maxUID,
-                returned: sortedHeaders.count,
-                returnedMin: returnedMin,
-                returnedMax: returnedMax,
-                hasMore: hasMore,
-                messages: sortedHeaders
+                total: totalCount,
+                messages: sortedHeaders,
+                page: SearchResultPage(
+                    returned: sortedHeaders.count,
+                    hasMore: hasMore,
+                    next: next
+                )
             )
         }
     }
