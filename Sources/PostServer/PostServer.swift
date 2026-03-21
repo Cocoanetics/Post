@@ -374,8 +374,10 @@ public actor PostServer {
         unseen: Bool? = nil,
         seen: Bool? = nil,
         flagged: Bool? = nil,
-        unflagged: Bool? = nil
-    ) async throws -> [MessageHeader] {
+        unflagged: Bool? = nil,
+        limit: Int = 100,
+        afterUid: Int? = nil
+    ) async throws -> SearchResult {
         try await withServer(serverId: serverId) { server in
             _ = try await server.selectMailbox(mailbox)
 
@@ -422,13 +424,79 @@ public actor PostServer {
                 criteria.append(.all)
             }
 
-            let matches: MessageIdentifierSet<UID> = try await server.search(criteria: criteria)
-            guard !matches.isEmpty else {
-                return []
+            // Build UID range for cursor-based pagination
+            var identifierSet: MessageIdentifierSet<UID>?
+            if let afterUid {
+                // Only search UIDs greater than the cursor
+                identifierSet = MessageIdentifierSet(UID(afterUid + 1)...)
             }
 
-            let headers = try await collectHeaders(from: server.fetchMessages(using: matches))
-            return headers.sorted { $0.uid > $1.uid }
+            // Use extended search with PARTIAL for server-side paging.
+            // RFC 9394 window is 1-based relative to the current scoped search result set.
+            let result = try await server.extendedSearch(
+                identifierSet: identifierSet,
+                criteria: criteria,
+                partialRange: makeFirstPartialRange(limit: limit)
+            )
+
+            let limitedUIDs: [UID]
+            if let partial = result.partial {
+                limitedUIDs = partial.results.toArray()
+            } else if let uidSet = result.all {
+                // Fallback for servers that ignore PARTIAL / lack ESEARCH support.
+                limitedUIDs = Array(uidSet.toArray().prefix(limit))
+            } else {
+                limitedUIDs = []
+            }
+
+            // Extract metadata
+            let totalCount = result.count
+            let minUID = result.min.map { Int($0.value) }
+            let maxUID = result.max.map { Int($0.value) }
+            
+            // Get the limited UIDs
+            guard !limitedUIDs.isEmpty else {
+                // No results
+                return SearchResult(
+                    count: totalCount,
+                    min: minUID,
+                    max: maxUID,
+                    returned: 0,
+                    returnedMin: nil,
+                    returnedMax: nil,
+                    hasMore: false,
+                    messages: []
+                )
+            }
+
+            // Fetch headers for the limited UIDs
+            let uidSet = MessageIdentifierSet(limitedUIDs)
+            let headers = try await collectHeaders(from: server.fetchMessages(using: uidSet))
+            let sortedHeaders = headers.sorted { $0.uid > $1.uid }
+            
+            // Calculate returned range
+            let returnedUIDs = sortedHeaders.map(\.uid)
+            let returnedMin = returnedUIDs.min()
+            let returnedMax = returnedUIDs.max()
+            
+            // Check if there are more results
+            let hasMore: Bool
+            if let maxUID, let returnedMax {
+                hasMore = returnedMax < maxUID
+            } else {
+                hasMore = false
+            }
+
+            return SearchResult(
+                count: totalCount,
+                min: minUID,
+                max: maxUID,
+                returned: sortedHeaders.count,
+                returnedMin: returnedMin,
+                returnedMax: returnedMax,
+                hasMore: hasMore,
+                messages: sortedHeaders
+            )
         }
     }
 
@@ -1117,7 +1185,7 @@ public actor PostServer {
         return results.sorted()
     }
 
-    internal func withServer<T: Sendable>(serverId: String, operation: (IMAPServer) async throws -> T) async throws -> T {
+    internal func withServer<T: Sendable>(serverId: String, operation: (SwiftMail.IMAPServer) async throws -> T) async throws -> T {
         try await assertServerAccessAllowed(serverId)
 
         do {
@@ -1189,7 +1257,7 @@ public actor PostServer {
         return allowedSet
     }
 
-    internal func fetchAdditionalHeaders(for message: Message, using server: IMAPServer) async -> [String: String]? {
+    internal func fetchAdditionalHeaders(for message: Message, using server: SwiftMail.IMAPServer) async -> [String: String]? {
         // SwiftMail 1.3.1+ populates additionalFields during fetchMessages
         return message.header.additionalFields
     }
@@ -1284,7 +1352,7 @@ public actor PostServer {
         throw PostServerError.invalidDate(field, value)
     }
 
-    internal func parseFlags(_ value: String) throws -> [Flag] {
+    internal func parseFlags(_ value: String) throws -> [SwiftMail.Flag] {
         let parsed = value
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -1298,7 +1366,7 @@ public actor PostServer {
         return parsed
     }
 
-    private func parseFlag(_ value: String) -> Flag {
+    private func parseFlag(_ value: String) -> SwiftMail.Flag {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = trimmed.hasPrefix("\\") ? String(trimmed.dropFirst()) : trimmed
 

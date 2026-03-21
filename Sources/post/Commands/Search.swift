@@ -45,6 +45,12 @@ extension PostCLI {
         @ArgumentParser.Flag(name: .long, help: "Only unflagged messages")
         var unflagged: Bool = false
 
+        @Option(name: .long, help: "Maximum results to return (default: 100)")
+        var limit: Int = 100
+
+        @Option(name: .long, help: "Return UIDs greater than this (for pagination)")
+        var afterUid: Int?
+
         @OptionGroup
         var globals: GlobalOptions
 
@@ -64,6 +70,12 @@ extension PostCLI {
                     throw ValidationError("--header must be in the form Name:Value (e.g. Message-Id:<...>)")
                 }
             }
+            if limit <= 0 {
+                throw ValidationError("--limit must be greater than zero.")
+            }
+            if let afterUid, afterUid <= 0 {
+                throw ValidationError("--after-uid must be greater than zero.")
+            }
         }
 
         func run() async throws {
@@ -80,7 +92,7 @@ extension PostCLI {
                     headerValue = String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines)
                 }
 
-                let messages = try await client.searchMessages(
+                let result = try await client.searchMessages(
                     serverId: serverId,
                     mailbox: mailbox,
                     from: from,
@@ -93,13 +105,58 @@ extension PostCLI {
                     unseen: unseen ? true : nil,
                     seen: seen ? true : nil,
                     flagged: flagged ? true : nil,
-                    unflagged: unflagged ? true : nil
+                    unflagged: unflagged ? true : nil,
+                    limit: limit,
+                    afterUid: afterUid
                 )
                 if globals.json {
-                    outputJSON(messages.map(JSONMessageHeader.init))
+                    struct SearchJSONOutput: Codable {
+                        let count: Int?
+                        let min: Int?
+                        let max: Int?
+                        let returned: Int
+                        let returnedMin: Int?
+                        let returnedMax: Int?
+                        let hasMore: Bool
+                        let nextCommand: String?
+                        let messages: [JSONMessageHeader]
+                    }
+
+                    let output = SearchJSONOutput(
+                        count: result.count,
+                        min: result.min,
+                        max: result.max,
+                        returned: result.returned,
+                        returnedMin: result.returnedMin,
+                        returnedMax: result.returnedMax,
+                        hasMore: result.hasMore,
+                        nextCommand: (result.hasMore && result.returnedMax != nil)
+                            ? "post search --server \(serverId) --mailbox \(mailbox)\(from.map { " --from \($0)" } ?? "")\(subject.map { " --subject \($0)" } ?? "")\(text.map { " --text \($0)" } ?? "")\(since.map { " --since \($0)" } ?? "")\(before.map { " --before \($0)" } ?? "")\(header.map { " --header \($0)" } ?? "")\(messageId.map { " --message-id \($0)" } ?? "")\(unseen ? " --unseen" : "")\(seen ? " --seen" : "")\(flagged ? " --flagged" : "")\(unflagged ? " --unflagged" : "") --limit \(limit) --after-uid \(result.returnedMax!)"
+                            : nil,
+                        messages: result.messages.map(JSONMessageHeader.init)
+                    )
+                    outputJSON(output)
                     return
                 }
-                printMessageHeaders(messages)
+                
+                // Plain text output
+                if let count = result.count, let min = result.min, let max = result.max {
+                    print("Found \(count) message(s) (UIDs \(min)-\(max))")
+                }
+                print("Showing \(result.returned) result(s)", terminator: "")
+                if let returnedMin = result.returnedMin, let returnedMax = result.returnedMax {
+                    print(" (UIDs \(returnedMin)-\(returnedMax))", terminator: "")
+                }
+                print(":")
+                print()
+                
+                printMessageHeaders(result.messages)
+                
+                // Show next page hint
+                if result.hasMore, let returnedMax = result.returnedMax {
+                    print()
+                    print("To see more: post search --server \(serverId) --mailbox \(mailbox) --limit \(limit) --after-uid \(returnedMax)")
+                }
             }
         }
     }
