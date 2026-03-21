@@ -212,7 +212,6 @@ struct JSONMessageHeader: Codable {
     let subject: String
     let date: String
     let flags: [String]
-    let flag: String?  // Deprecated, kept for backward compat
 
     init(_ message: MessageHeader) {
         uid = message.uid
@@ -220,7 +219,6 @@ struct JSONMessageHeader: Codable {
         subject = message.subject
         date = message.date
         flags = message.flags.array
-        flag = message.flags.color?.rawValue
     }
 }
 

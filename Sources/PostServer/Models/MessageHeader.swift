@@ -8,9 +8,6 @@ public struct MessageHeader: Codable, Sendable {
     public let subject: String
     public let date: String
     public let flags: MessageFlags
-    
-    /// Deprecated: Use `flags.color` instead
-    public var flag: String? { flags.color?.rawValue }
 
     public init(uid: Int, from: String, subject: String, date: String, flags: MessageFlags) {
         self.uid = uid
