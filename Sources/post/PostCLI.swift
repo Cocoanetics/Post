@@ -17,14 +17,14 @@ import SwiftMCP
 import SwiftTextHTML
 
 /// Prints a message to standard error
-private func printError(_ message: String) {
+func printError(_ message: String) {
     if let data = message.data(using: .utf8) {
         FileHandle.standardError.write(data)
     }
 }
 
 /// Prints IDLE event log notifications from the daemon to stdout.
-private final class IdleEventLogger: MCPServerProxyLogNotificationHandling, @unchecked Sendable {
+final class IdleEventLogger: MCPServerProxyLogNotificationHandling, @unchecked Sendable {
     private let dateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss"
@@ -121,7 +121,7 @@ struct PostCLI: AsyncParsableCommand {
             Credential.self,
             APIKey.self
         ]
-    
+
 }
 
 extension PostCLI {
@@ -132,1492 +132,10 @@ extension PostCLI {
         @Option(name: .long, help: "Scoped API key token (overrides POST_API_KEY and .env)")
         var token: String?
     }
-
-    struct Servers: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "List configured IMAP servers")
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func run() async throws {
-            try await withClient { client in
-                let servers = try await client.listServers()
-                if globals.json {
-                    outputJSON(servers)
-                    return
-                }
-                printServersTable(servers)
-            }
-        }
-    }
-
-    struct List: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "List messages")
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Mailbox name")
-        var mailbox: String = "INBOX"
-
-        @Option(name: .long, help: "Maximum number of messages")
-        var limit: Int = 10
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                let messages = try await client.listMessages(serverId: serverId, mailbox: mailbox, limit: limit)
-                if globals.json {
-                    outputJSON(messages.map(JSONMessageHeader.init))
-                    return
-                }
-                printMessageHeaders(messages)
-            }
-        }
-    }
-
-    struct Fetch: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Fetch message(s) by UID")
-
-        enum BodyFormat: String, ExpressibleByArgument {
-            case text, html, markdown
-        }
-
-        @Argument(help: "UID(s) of the message (comma-separated; ranges like 1-3 allowed)")
-        var uid: String
-
-        @ArgumentParser.Flag(help: "Download raw RFC 822 message as .eml file")
-        var eml: Bool = false
-
-        @Option(name: .long, help: "Body format: text, html, or markdown (default: markdown)")
-        var body: BodyFormat = .markdown
-
-        @Option(name: .long, help: "Output path — directory or filename for .eml or text files")
-        var output: String?
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Mailbox name")
-        var mailbox: String = "INBOX"
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func validate() throws {
-            if eml && output == nil {
-                throw ValidationError("--eml requires --output")
-            }
-
-            guard MessageIdentifierSet<UID>(string: uid) != nil else {
-                throw ValidationError("Invalid UID set '\(uid)'. Use comma-separated values or ranges (e.g. 1-3,5,10-20).")
-            }
-        }
-
-        private func formatBody(_ message: MessageDetail) async throws -> String {
-            switch body {
-            case .text:
-                return message.textBody ?? ""
-            case .html:
-                return message.htmlBody ?? message.textBody ?? ""
-            case .markdown:
-                return try await message.markdown()
-            }
-        }
-
-        private func resolveHeaders(
-            for message: MessageDetail,
-            client: PostProxy,
-            serverId: String
-        ) async -> [String: String] {
-            let decoded = decodeFetchHeaders(message.additionalHeaders)
-            if !decoded.isEmpty {
-                return filterHeaders(decoded)
-            }
-
-            guard let emlData = try? await client.downloadEml(serverId: serverId, uid: message.uid, mailbox: mailbox),
-                  !emlData.isEmpty else {
-                return decoded
-            }
-
-            return filterHeaders(decodeFetchHeaders(parseAdditionalHeaders(from: emlData)))
-        }
-
-        /// Filters out transport, routing, cryptographic, and ESP tracking headers
-        private func filterHeaders(_ headers: [String: String]) -> [String: String] {
-            let excludedPrefixes = [
-                "received", "return-path", "delivered-to",           // Transport/routing
-                "dkim-signature", "arc-",                             // Cryptographic
-                "x-sg-", "x-ses-", "x-hs-", "x-sonic-", "x-ymail-",  // ESP tracking
-                "cfbl-", "x-msg-", "x-pda-", "x-entity-",            // Metadata cruft
-                "mime-version", "content-type", "content-transfer-encoding"  // Redundant (in body structure)
-            ]
-
-            return headers.filter { key, _ in
-                !excludedPrefixes.contains { key.hasPrefix($0) }
-            }
-        }
-
-        struct FormattedMessage: Codable {
-            let uid: Int
-            let mailbox: String
-            let from: String
-            let to: [String]
-            let subject: String
-            let date: String
-            let body: String
-            let headers: [String: String]
-            let attachments: [AttachmentInfo]?
-
-            init(detail: MessageDetail, mailbox: String, formattedBody: String, headers: [String: String]) {
-                self.uid = detail.uid
-                self.mailbox = mailbox
-                self.from = detail.from
-                self.to = detail.to
-                self.subject = detail.subject
-                self.date = detail.date
-                self.body = formattedBody
-                self.headers = headers
-                self.attachments = detail.attachments.isEmpty ? nil : detail.attachments
-            }
-        }
-
-        func run() async throws {
-            try await withClient(quiet: globals.json) { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                guard let uidSet = MessageIdentifierSet<UID>(string: uid) else {
-                    throw ValidationError("Invalid UID set '\(uid)'. Use comma-separated values or ranges (e.g. 1-3,5,10-20).")
-                }
-
-                let outURL: URL? = output.map { URL(fileURLWithPath: $0) }
-                let isExplicitFile = outURL?.pathExtension.count ?? 0 > 0
-                let uidArray = uidSet.toArray()
-
-                if isExplicitFile && uidArray.count > 1 {
-                    throw ValidationError("Cannot use a filename for --output when exporting multiple UIDs. Use a directory instead.")
-                }
-
-                let outputDir: URL?
-                if let outURL, eml || !globals.json {
-                    let dir = isExplicitFile ? outURL.deletingLastPathComponent() : outURL
-                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                    outputDir = dir
-                } else {
-                    outputDir = nil
-                }
-
-                var jsonMessages: [FormattedMessage] = []
-                var foundCount = 0
-                for messageUID in uidArray {
-                    let uidValue = Int(messageUID.value)
-
-                    if eml {
-                        guard let outputDir else {
-                            throw ValidationError("--eml requires --output")
-                        }
-
-                        let emlData = try await client.downloadEml(serverId: serverId, uid: uidValue, mailbox: mailbox)
-                        guard !emlData.isEmpty else { continue }
-                        foundCount += 1
-                        let destination: URL
-                        if isExplicitFile, let outURL {
-                            destination = outURL
-                        } else {
-                            destination = outputDir.appendingPathComponent("\(uidValue).eml")
-                        }
-                        let displayName = destination.lastPathComponent
-                        try emlData.write(to: destination)
-                        print("Saved \(displayName) to \(destination.path)")
-                        continue
-                    }
-
-                    let messages = try await client.fetchMessage(
-                        serverId: serverId,
-                        uids: String(uidValue),
-                        mailbox: mailbox
-                    )
-
-                    foundCount += messages.count
-
-                    for message in messages {
-                        let formattedBody = try await formatBody(message)
-
-                        if globals.json {
-                            let headers = await resolveHeaders(for: message, client: client, serverId: serverId)
-                            jsonMessages.append(FormattedMessage(
-                                detail: message,
-                                mailbox: mailbox,
-                                formattedBody: formattedBody,
-                                headers: headers
-                            ))
-                        } else if let outputDir {
-                            let filename = "\(message.uid).txt"
-                            let destination = outputDir.appendingPathComponent(filename)
-                            try formattedBody.write(to: destination, atomically: true, encoding: .utf8)
-                            print("Saved \(filename) to \(destination.path)")
-                        } else {
-                            print("UID: \(message.uid)")
-                            print("From: \(message.from)")
-                            print("To: \(message.to.joined(separator: ", "))")
-                            print("Subject: \(message.subject)")
-                            print("Date: \(message.date)")
-                            if !message.attachments.isEmpty {
-                                print("Attachments: \(message.attachments.map(\.filename).joined(separator: ", "))")
-                            }
-                            print()
-                            print(formattedBody)
-                            print()
-                        }
-                    }
-                }
-
-                if foundCount == 0 {
-                    printError("Error: No messages found\n")
-                    throw ExitCode.failure
-                }
-
-                if globals.json, !eml {
-                    outputJSON(jsonMessages)
-                }
-            }
-        }
-    }
-
-    struct EML: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Parse a local .eml file and output body")
-
-        enum BodyFormat: String, ExpressibleByArgument {
-            case text, html, markdown
-        }
-
-        @Argument(help: "Path to the .eml file")
-        var file: String
-
-        @Option(name: .long, help: "Body format: text, html, or markdown (default: markdown)")
-        var body: BodyFormat = .markdown
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func run() async throws {
-            let fileURL = URL(fileURLWithPath: file)
-            
-            guard FileManager.default.fileExists(atPath: file) else {
-                throw ValidationError("File not found: \(file)")
-            }
-            
-            let emlData = try Data(contentsOf: fileURL)
-            let message = try EMLParser.parse(emlData)
-            
-            // Convert to MessageDetail format
-            let textBody = message.parts.first { $0.contentType.lowercased().hasPrefix("text/plain") }
-                .flatMap { part -> String? in
-                    guard let data = part.data else { return nil }
-                    return String(data: data, encoding: .utf8)
-                }
-            
-            let htmlBody = message.parts.first { $0.contentType.lowercased().hasPrefix("text/html") }
-                .flatMap { part -> String? in
-                    guard let data = part.data else { return nil }
-                    return String(data: data, encoding: .utf8)
-                }
-            
-            let detail = MessageDetail(
-                uid: 0,
-                from: message.from ?? "Unknown",
-                to: message.to,
-                subject: message.subject ?? "(No Subject)",
-                date: ISO8601DateFormatter().string(from: message.date ?? Date()),
-                textBody: textBody,
-                htmlBody: htmlBody,
-                attachments: [],
-                additionalHeaders: [:]
-            )
-            
-            // Format body according to option
-            let formattedBody: String
-            switch body {
-            case .text:
-                formattedBody = detail.textBody ?? ""
-            case .html:
-                formattedBody = detail.htmlBody ?? detail.textBody ?? ""
-            case .markdown:
-                formattedBody = try await detail.markdown()
-            }
-            
-            if globals.json {
-                struct EMLOutput: Codable {
-                    let from: String
-                    let to: [String]
-                    let subject: String
-                    let date: String
-                    let body: String
-                }
-                
-                let output = EMLOutput(
-                    from: detail.from,
-                    to: detail.to,
-                    subject: detail.subject,
-                    date: detail.date,
-                    body: formattedBody
-                )
-                outputJSON([output])
-            } else {
-                print(formattedBody)
-            }
-        }
-    }
-
-    struct Folders: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "List mailbox folders")
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                let folders = try await client.listFolders(serverId: serverId)
-
-                if globals.json {
-                    outputJSON(folders)
-                    return
-                }
-
-                if folders.isEmpty {
-                    print("No folders found.")
-                    return
-                }
-
-                for folder in folders {
-                    if let specialUse = folder.specialUse, !specialUse.isEmpty {
-                        print("- \(folder.name) (\(specialUse))")
-                    } else {
-                        print("- \(folder.name)")
-                    }
-                }
-            }
-        }
-    }
-
-    struct Create: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Create a mailbox folder")
-
-        @Argument(help: "Mailbox name")
-        var name: String
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                let result = try await client.createMailbox(serverId: serverId, name: name)
-                if globals.json {
-                    outputJSON(ResultMessage(result: result))
-                    return
-                }
-                print(result)
-            }
-        }
-    }
-
-    struct Status: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Get mailbox status")
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Mailbox name")
-        var mailbox: String = "INBOX"
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                let status = try await client.mailboxStatus(serverId: serverId, mailbox: mailbox)
-                if globals.json {
-                    outputJSON(status)
-                    return
-                }
-                printMailboxStatus(status)
-            }
-        }
-    }
-
-    struct Search: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Search messages")
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Mailbox name")
-        var mailbox: String = "INBOX"
-
-        @Option(name: .long, help: "Search in From field")
-        var from: String?
-
-        @Option(name: .long, help: "Search in Subject field")
-        var subject: String?
-
-        @Option(name: .long, help: "Search in text")
-        var text: String?
-
-        @Option(name: .long, help: "Search internal date since (ISO 8601)")
-        var since: String?
-
-        @Option(name: .long, help: "Search internal date before (ISO 8601)")
-        var before: String?
-
-        @Option(name: .long, help: "Search a header field, format: Name:Value")
-        var header: String?
-
-        @Option(name: .long, help: "Search by Message-Id header value")
-        var messageId: String?
-
-        @ArgumentParser.Flag(name: .long, help: "Only unseen (unread) messages")
-        var unseen: Bool = false
-
-        @ArgumentParser.Flag(name: .long, help: "Only seen (read) messages")
-        var seen: Bool = false
-
-        @ArgumentParser.Flag(name: .long, help: "Only flagged messages")
-        var flagged: Bool = false
-
-        @ArgumentParser.Flag(name: .long, help: "Only unflagged messages")
-        var unflagged: Bool = false
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func validate() throws {
-            if unseen && seen {
-                throw ValidationError("Only one of --unseen or --seen may be set.")
-            }
-            if flagged && unflagged {
-                throw ValidationError("Only one of --flagged or --unflagged may be set.")
-            }
-            if header != nil && messageId != nil {
-                throw ValidationError("Only one of --header or --message-id may be set.")
-            }
-            if let header {
-                let parts = header.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-                if parts.count != 2 || parts[0].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    throw ValidationError("--header must be in the form Name:Value (e.g. Message-Id:<...>)")
-                }
-            }
-        }
-
-        func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                var headerField: String?
-                var headerValue: String?
-                if let messageId {
-                    headerField = "Message-Id"
-                    headerValue = messageId
-                } else if let header {
-                    let parts = header.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-                    headerField = String(parts[0]).trimmingCharacters(in: .whitespacesAndNewlines)
-                    headerValue = String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-
-                let messages = try await client.searchMessages(
-                    serverId: serverId,
-                    mailbox: mailbox,
-                    from: from,
-                    subject: subject,
-                    text: text,
-                    since: since,
-                    before: before,
-                    headerField: headerField,
-                    headerValue: headerValue,
-                    unseen: unseen ? true : nil,
-                    seen: seen ? true : nil,
-                    flagged: flagged ? true : nil,
-                    unflagged: unflagged ? true : nil
-                )
-                if globals.json {
-                    outputJSON(messages.map(JSONMessageHeader.init))
-                    return
-                }
-                printMessageHeaders(messages)
-            }
-        }
-    }
-
-    struct Move: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Move messages to another mailbox")
-
-        @Argument(help: "Message UID set (e.g. 1,2,5-9)")
-        var uids: String
-
-        @Argument(help: "Target mailbox")
-        var target: String
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Source mailbox")
-        var mailbox: String = "INBOX"
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                let message = try await client.moveMessages(
-                    serverId: serverId,
-                    uids: uids,
-                    targetMailbox: target,
-                    mailbox: mailbox
-                )
-                if globals.json {
-                    outputJSON(ResultMessage(result: message))
-                    return
-                }
-                print(message)
-            }
-        }
-    }
-
-    struct Copy: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Copy messages to another mailbox")
-
-        @Argument(help: "Message UID set (e.g. 1,2,5-9)")
-        var uids: String
-
-        @Argument(help: "Target mailbox")
-        var target: String
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Source mailbox")
-        var mailbox: String = "INBOX"
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                let result = try await client.copyMessages(
-                    serverId: serverId,
-                    uids: uids,
-                    targetMailbox: target,
-                    mailbox: mailbox
-                )
-                if globals.json {
-                    outputJSON(ResultMessage(result: result))
-                    return
-                }
-                print(result)
-            }
-        }
-    }
-
-    struct FlagMessages: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(
-            commandName: "flag",
-            abstract: "Add/remove flags or set Mail.app flag color on messages"
-        )
-
-        @Argument(help: "Message UID set (e.g. 1,2,5-9)")
-        var uids: String
-
-        @Option(name: .long, help: "Comma-separated flags to add")
-        var add: String?
-
-        @Option(name: .long, help: "Comma-separated flags to remove")
-        var remove: String?
-
-        @Option(name: .long, help: "Set Mail.app flag color (red, orange, yellow, green, blue, purple, gray)")
-        var color: String?
-
-        @ArgumentParser.Flag(name: .long, help: "Remove \\Flagged and all Mail.app color bits")
-        var unflag: Bool = false
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Mailbox name")
-        var mailbox: String = "INBOX"
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        private enum Operation {
-            case add(String)
-            case remove(String)
-            case color(MailFlagColor)
-            case unflag
-        }
-
-        private static let mailFlagColorBits: [SwiftMail.Flag] = [
-            .custom("$MailFlagBit0"),
-            .custom("$MailFlagBit1"),
-            .custom("$MailFlagBit2")
-        ]
-
-        private static var supportedColorNames: String {
-            MailFlagColor.allCases.map(\.rawValue).joined(separator: ", ")
-        }
-
-        private func normalized(_ value: String?) -> String? {
-            guard let value else { return nil }
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        }
-
-        private func parsedColor() throws -> MailFlagColor? {
-            guard let colorValue = normalized(color) else { return nil }
-            let normalizedColor = colorValue.lowercased()
-            guard let color = MailFlagColor(rawValue: normalizedColor) else {
-                throw ValidationError("Invalid --color '\(colorValue)'. Allowed values: \(Self.supportedColorNames).")
-            }
-            return color
-        }
-
-        private func resolvedOperation() throws -> Operation {
-            let addValue = normalized(add)
-            let removeValue = normalized(remove)
-            let colorValue = try parsedColor()
-            let selectedCount = [addValue != nil, removeValue != nil, colorValue != nil, unflag]
-                .filter { $0 }
-                .count
-
-            guard selectedCount == 1 else {
-                throw ValidationError("Exactly one of --add, --remove, --color, or --unflag is required.")
-            }
-
-            if let addValue {
-                return .add(addValue)
-            }
-
-            if let removeValue {
-                return .remove(removeValue)
-            }
-
-            if let colorValue {
-                return .color(colorValue)
-            }
-
-            return .unflag
-        }
-
-        private func applyFlags(
-            _ flags: [SwiftMail.Flag],
-            operation: String,
-            client: PostProxy,
-            serverId: String
-        ) async throws {
-            guard !flags.isEmpty else { return }
-            let joinedFlags = flags.map { $0.description }.joined(separator: ",")
-            _ = try await client.flagMessages(
-                serverId: serverId,
-                uids: uids,
-                flags: joinedFlags,
-                operation: operation,
-                mailbox: mailbox
-            )
-        }
-
-        func validate() throws {
-            _ = try resolvedOperation()
-        }
-
-        func run() async throws {
-            let operation = try resolvedOperation()
-
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                let result: String
-
-                switch operation {
-                case .add(let flags):
-                    result = try await client.flagMessages(
-                        serverId: serverId,
-                        uids: uids,
-                        flags: flags,
-                        operation: "add",
-                        mailbox: mailbox
-                    )
-                case .remove(let flags):
-                    result = try await client.flagMessages(
-                        serverId: serverId,
-                        uids: uids,
-                        flags: flags,
-                        operation: "remove",
-                        mailbox: mailbox
-                    )
-                case .color(let color):
-                    try await applyFlags(
-                        Self.mailFlagColorBits,
-                        operation: "remove",
-                        client: client,
-                        serverId: serverId
-                    )
-                    try await applyFlags(
-                        [.flagged],
-                        operation: "add",
-                        client: client,
-                        serverId: serverId
-                    )
-                    try await applyFlags(
-                        color.flagBits,
-                        operation: "add",
-                        client: client,
-                        serverId: serverId
-                    )
-                    result = "Set Mail.app flag color to \(color.rawValue)."
-                case .unflag:
-                    try await applyFlags(
-                        [.flagged],
-                        operation: "remove",
-                        client: client,
-                        serverId: serverId
-                    )
-                    try await applyFlags(
-                        Self.mailFlagColorBits,
-                        operation: "remove",
-                        client: client,
-                        serverId: serverId
-                    )
-                    result = "Removed \\Flagged and Mail.app color bits."
-                }
-
-                if globals.json {
-                    outputJSON(ResultMessage(result: result))
-                    return
-                }
-                print(result)
-            }
-        }
-    }
-
-    struct Trash: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Move messages to trash")
-
-        @Argument(help: "Message UID set (e.g. 1,2,5-9)")
-        var uids: String
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Source mailbox")
-        var mailbox: String = "INBOX"
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                let result = try await client.trashMessages(serverId: serverId, uids: uids, mailbox: mailbox)
-                if globals.json {
-                    outputJSON(ResultMessage(result: result))
-                    return
-                }
-                print(result)
-            }
-        }
-    }
-
-    struct Archive: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Archive messages")
-
-        @Argument(help: "Message UID set (e.g. 1,2,5-9)")
-        var uids: String
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Source mailbox")
-        var mailbox: String = "INBOX"
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                let result = try await client.archiveMessages(serverId: serverId, uids: uids, mailbox: mailbox)
-                if globals.json {
-                    outputJSON(ResultMessage(result: result))
-                    return
-                }
-                print(result)
-            }
-        }
-    }
-
-    struct Junk: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Mark messages as junk")
-
-        @Argument(help: "Message UID set (e.g. 1,2,5-9)")
-        var uids: String
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Source mailbox")
-        var mailbox: String = "INBOX"
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                let result = try await client.junkMessages(serverId: serverId, uids: uids, mailbox: mailbox)
-                if globals.json {
-                    outputJSON(ResultMessage(result: result))
-                    return
-                }
-                print(result)
-            }
-        }
-    }
-
-    struct Expunge: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Expunge deleted messages")
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Mailbox name")
-        var mailbox: String = "INBOX"
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                let result = try await client.expungeMessages(serverId: serverId, mailbox: mailbox)
-                if globals.json {
-                    outputJSON(ResultMessage(result: result))
-                    return
-                }
-                print(result)
-            }
-        }
-    }
-
-    struct Quota: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Show storage quota")
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Mailbox name")
-        var mailbox: String = "INBOX"
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                let quota = try await client.getQuota(serverId: serverId, mailbox: mailbox)
-                if globals.json {
-                    outputJSON(quota)
-                    return
-                }
-                printQuotaInfo(quota)
-            }
-        }
-    }
-
-    struct Attachment: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Download attachment from a message")
-
-        @Argument(help: "Message UID")
-        var uid: Int
-
-        @Option(name: .long, help: "Attachment filename (downloads first if omitted)")
-        var filename: String?
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Mailbox name")
-        var mailbox: String = "INBOX"
-
-        @Option(name: .long, help: "Output path — directory or filename (default: current directory)")
-        var output: String = "."
-
-        func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                let attachment = try await client.downloadAttachment(serverId: serverId, uid: uid, filename: filename, mailbox: mailbox)
-
-                guard let data = Data(base64Encoded: attachment.data) else {
-                    print("Error: Failed to decode attachment data.")
-                    return
-                }
-
-                let outURL = URL(fileURLWithPath: output)
-                let isExplicitFile = outURL.pathExtension.count > 0
-                let outputDir = isExplicitFile ? outURL.deletingLastPathComponent() : outURL
-                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-                let destination = isExplicitFile ? outURL : outputDir.appendingPathComponent(attachment.filename)
-                let displayName = destination.lastPathComponent
-                try data.write(to: destination)
-                print("Saved \(displayName) (\(attachment.contentType), \(formatBytes(attachment.size))) to \(destination.path)")
-            }
-        }
-    }
-
-    struct PDF: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(
-            commandName: "pdf",
-            abstract: "Export message body as PDF"
-        )
-
-        @Argument(help: "Message UID(s) (comma-separated; ranges like 1-3 allowed)")
-        var uid: String
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Mailbox name")
-        var mailbox: String = "INBOX"
-
-        @Option(name: .long, help: "Output path — directory or filename ending in .pdf (default: current directory)")
-        var output: String = "."
-
-        func validate() throws {
-            guard MessageIdentifierSet<UID>(string: uid) != nil else {
-                throw ValidationError("Invalid UID set '\(uid)'. Use comma-separated values or ranges (e.g. 1-3,5,10-20).")
-            }
-        }
-
-        func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                guard let uidSet = MessageIdentifierSet<UID>(string: uid) else {
-                    throw ValidationError("Invalid UID set '\(uid)'.")
-                }
-
-                let outURL = URL(fileURLWithPath: output)
-                let isExplicitFile = outURL.pathExtension.lowercased() == "pdf"
-                let uidArray = uidSet.toArray()
-
-                if isExplicitFile && uidArray.count > 1 {
-                    throw ValidationError("Cannot use a filename for --output when exporting multiple UIDs. Use a directory instead.")
-                }
-
-                let outputDir = isExplicitFile ? outURL.deletingLastPathComponent() : outURL
-                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-
-                var foundCount = 0
-                for messageUID in uidArray {
-                    let uidValue = Int(messageUID.value)
-                    let result = try await client.exportPDF(serverId: serverId, uid: uidValue, mailbox: mailbox)
-                    guard let data = Data(base64Encoded: result.data) else {
-                        printError("Error: Failed to decode PDF for UID \(uidValue)\n")
-                        continue
-                    }
-
-                    let destination = isExplicitFile ? outURL : outputDir.appendingPathComponent(result.filename)
-                    let displayName = destination.lastPathComponent
-                    try data.write(to: destination)
-                    print("Saved \(displayName) (\(formatBytes(result.size))) to \(destination.path)")
-                    foundCount += 1
-                }
-
-                if foundCount == 0 {
-                    printError("Error: No PDFs exported\n")
-                    throw ExitCode.failure
-                }
-            }
-        }
-    }
-
-    struct Draft: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Create a new email draft")
-
-        @Option(name: .long, help: "Sender email address (auto-derived from original when using --replying-to)")
-        var from: String?
-
-        @Option(name: .long, help: "Comma-separated recipient addresses (auto-derived from original when using --replying-to)")
-        var to: String?
-
-        @Option(name: .long, help: "Email subject (auto-derived from original when using --replying-to)")
-        var subject: String?
-
-        @Option(
-            name: .long,
-            help: "Body text or file path. Existing files are read; inline values decode escapes and auto-detect as HTML, Markdown, or plain text. Optional when using --replying-to (creates empty draft for inline editing).",
-            transform: resolveDraftBodyInputForCLI
-        )
-        var body: String?
-
-        @Option(name: .long, help: "Comma-separated CC addresses")
-        var cc: String?
-
-        @Option(name: .long, help: "Comma-separated BCC addresses")
-        var bcc: String?
-
-        @Option(name: .long, parsing: .upToNextOption, help: "File paths or glob patterns to attach (repeatable)")
-        var attach: [String] = []
-
-        @Option(name: .long, help: "Server identifier")
-        var server: String?
-
-        @Option(name: .long, help: "Target mailbox (default: server's Drafts folder)")
-        var mailbox: String?
-
-        @Option(name: .long, help: "UID of an existing message to reply to (sets In-Reply-To and References headers)")
-        var replyingTo: Int?
-
-        @Option(name: .long, help: "Mailbox containing the message referenced by --replying-to (default: INBOX)")
-        var replyMailbox: String?
-
-        @ArgumentParser.Flag(name: .long, help: "Reply-all: include all original recipients in CC (only with --replying-to)")
-        var replyAll: Bool = false
-
-        @OptionGroup
-        var globals: GlobalOptions
-
-        func run() async throws {
-            // Validate: body is required unless --replying-to is used
-            guard body != nil || replyingTo != nil else {
-                throw ValidationError("Missing required option '--body' (omit only when using --replying-to for inline editing)")
-            }
-
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
-                let attachments = attach.isEmpty ? nil : attach.joined(separator: ",")
-
-                // Resolve reply threading headers and auto-derive fields if --replying-to is set
-                var inReplyTo: String? = nil
-                var references: String? = nil
-                var derivedFrom: String? = nil
-                var derivedTo: String? = nil
-                var derivedSubject: String? = nil
-                var derivedCC: String? = nil
-                var derivedBody: String? = nil
-
-                if let replyUID = replyingTo {
-                    let sourceMailbox = replyMailbox ?? "INBOX"
-                    let messages = try await client.fetchMessage(
-                        serverId: serverId,
-                        uids: String(replyUID),
-                        mailbox: sourceMailbox
-                    )
-
-                    guard let original = messages.first else {
-                        throw ValidationError("Message UID \(replyUID) not found in mailbox '\(sourceMailbox)'")
-                    }
-
-                    // Threading headers
-                    inReplyTo = original.messageId
-
-                    if let originalRefs = original.references, !originalRefs.isEmpty {
-                        if let msgId = original.messageId {
-                            references = "\(originalRefs) \(msgId)"
-                        } else {
-                            references = originalRefs
-                        }
-                    } else if let msgId = original.messageId {
-                        references = msgId
-                    }
-
-                    // Auto-derive from, to, subject if not explicitly provided
-                    if from == nil {
-                        derivedFrom = original.to.first
-                        guard derivedFrom != nil else {
-                            throw ValidationError("Cannot auto-derive sender from original message (no recipient found)")
-                        }
-                    }
-
-                    if to == nil {
-                        derivedTo = original.from
-                    }
-
-                    if subject == nil {
-                        derivedSubject = original.subject.hasPrefix("Re: ") ? original.subject : "Re: \(original.subject)"
-                    }
-
-                    // Handle reply-all: include all original recipients in CC (except sender and primary recipient)
-                    if replyAll && cc == nil {
-                        let allRecipients = original.to + (original.cc ?? [])
-                        let excludeSender = derivedFrom ?? from ?? ""
-                        let excludePrimary = derivedTo ?? to ?? ""
-                        
-                        let ccAddresses = allRecipients.filter { recipient in
-                            recipient != excludeSender && recipient != excludePrimary
-                        }
-                        
-                        if !ccAddresses.isEmpty {
-                            derivedCC = ccAddresses.joined(separator: ", ")
-                        }
-                    }
-
-                    // Auto-quote original when body is omitted (like Mail.app Reply behavior)
-                    if body == nil {
-                        derivedBody = try await formatQuotedReply(original: original)
-                    }
-                }
-
-                // Validate required fields
-                let finalFrom = from ?? derivedFrom
-                let finalTo = to ?? derivedTo
-                let finalSubject = subject ?? derivedSubject
-
-                guard let fromAddress = finalFrom else {
-                    throw ValidationError("Missing required option '--from' (cannot auto-derive without --replying-to)")
-                }
-                guard let toAddress = finalTo else {
-                    throw ValidationError("Missing required option '--to' (cannot auto-derive without --replying-to)")
-                }
-                guard let subjectText = finalSubject else {
-                    throw ValidationError("Missing required option '--subject' (cannot auto-derive without --replying-to)")
-                }
-
-                // Resolve final body and detect format
-                let finalBody = body ?? derivedBody ?? ""
-                let format: PostServer.BodyFormat
-                switch detectDraftBodyInputFormat(finalBody) {
-                case .html:
-                    format = .html
-                case .markdown:
-                    format = .markdown
-                case .plainText:
-                    format = .text
-                }
-
-                let result = try await client.createDraft(
-                    serverId: serverId,
-                    from: fromAddress,
-                    to: toAddress,
-                    subject: subjectText,
-                    body: finalBody,
-                    format: format,
-                    cc: cc ?? derivedCC,
-                    bcc: bcc,
-                    attachments: attachments,
-                    mailbox: mailbox,
-                    inReplyTo: inReplyTo,
-                    references: references
-                )
-                if globals.json {
-                    outputJSON(result)
-                    return
-                }
-                if let uid = result.uid {
-                    print("Draft created in '\(result.mailbox)' (UID \(uid)).")
-                } else {
-                    print("Draft created in '\(result.mailbox)'.")
-                }
-            }
-        }
-
-        private func formatQuotedReply(original: MessageDetail) async throws -> String {
-            // Use HTML→Markdown conversion (preserves formatting better than plain text)
-            let markdown = try await original.markdown()
-            
-            // Format attribution header
-            let dateFormatter = ISO8601DateFormatter()
-            dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            
-            let germanFormatter = DateFormatter()
-            germanFormatter.dateFormat = "dd.MM.yyyy, 'at' HH:mm"
-            germanFormatter.locale = Locale(identifier: "en_US")
-            
-            let dateString: String
-            if let parsedDate = dateFormatter.date(from: original.date) {
-                dateString = germanFormatter.string(from: parsedDate)
-            } else {
-                dateString = original.date
-            }
-            
-            // Build quote header (will be inside blockquote)
-            let quoteHeader = "> On \(dateString), \(original.from) wrote:"
-            
-            // Quote the body with paragraph breaks preserved
-            let bodyLines = markdown.components(separatedBy: "\n")
-            let quotedLines = bodyLines.map { line in
-                line.isEmpty ? ">" : "> \(line)"
-            }
-            
-            // Combine: two blank lines (for empty paragraphs) + quoted header + blank quote line + quoted body
-            return "\n\n\(quoteHeader)\n>\n\(quotedLines.joined(separator: "\n"))"
-        }
-    }
-
-    struct Idle: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Watch IMAP IDLE events in real time (debug tool)")
-
-        @Option(name: .long, help: "Scoped API key token (overrides POST_API_KEY and .env)")
-        var token: String?
-
-        func run() async throws {
-            let tcpConfig = MCPServerTcpConfig(serviceName: PostProxy.serverName)
-            let proxy = MCPServerProxy(config: .tcp(config: tcpConfig))
-            if let token = resolveAPIToken() {
-                await proxy.setAccessTokenMeta(token)
-            }
-
-            await proxy.setLogNotificationHandler(IdleEventLogger())
-
-            try await proxy.connect()
-            try await setProxyLogLevel(.debug, on: proxy)
-
-            printError("Connected to postd. Watching IDLE events (Ctrl+C to stop)...\n")
-
-            let client = PostProxy(proxy: proxy)
-            do {
-                try await client.watchIdleEvents()
-            } catch is CancellationError {
-                // Expected on Ctrl+C
-            } catch {
-                printError("\(error.localizedDescription)\n")
-                await proxy.disconnect()
-                _Exit(1)
-            }
-
-            await proxy.disconnect()
-        }
-    }
-
-    struct Credential: ParsableCommand {
-        static let configuration = CommandConfiguration(
-            abstract: "Manage IMAP credentials in the Keychain",
-            subcommands: [Set.self, Delete.self, List.self]
-        )
-
-        struct Set: ParsableCommand {
-            static let configuration = CommandConfiguration(
-                commandName: "set",
-                abstract: "Store IMAP credentials in the Keychain"
-            )
-
-            @Option(name: .long, help: "Server identifier")
-            var server: String
-
-            @Option(name: .long, help: "IMAP host")
-            var host: String?
-
-            @Option(name: .long, help: "IMAP port")
-            var port: Int?
-
-            @Option(name: .long, help: "IMAP username")
-            var username: String?
-
-            @Option(name: .long, help: "IMAP password")
-            var password: String?
-
-            func run() throws {
-                #if canImport(Security)
-                let config = try? PostConfiguration.load()
-                if let config, config.server(withID: server) == nil {
-                    throw PostConfigurationError.unknownServer(server)
-                }
-
-                let fallbackCredentials = config?.server(withID: server)?.credentials
-                let resolvedHost = try resolveRequiredValue(
-                    explicit: host,
-                    fallback: fallbackCredentials?.host,
-                    prompt: "Host"
-                )
-
-                let resolvedPort = try resolvePort(
-                    explicit: port,
-                    fallback: fallbackCredentials?.port,
-                    prompt: "Port",
-                    defaultValue: 993
-                )
-
-                let resolvedUsername = try resolveRequiredValue(
-                    explicit: username,
-                    fallback: fallbackCredentials?.username,
-                    prompt: "Username"
-                )
-
-                let resolvedPassword: String
-                if let explicitPassword = password?.trimmingCharacters(in: .whitespacesAndNewlines), !explicitPassword.isEmpty {
-                    resolvedPassword = explicitPassword
-                } else if let fallbackPassword = fallbackCredentials?.password, !fallbackPassword.isEmpty {
-                    resolvedPassword = fallbackPassword
-                } else {
-                    print("Password: ", terminator: "")
-                    resolvedPassword = readPassword()
-                }
-
-                guard !resolvedPassword.isEmpty else {
-                    print("Password cannot be empty.")
-                    throw ExitCode.failure
-                }
-
-                let store = KeychainCredentialStore()
-                try store.store(
-                    id: server,
-                    host: resolvedHost,
-                    port: resolvedPort,
-                    username: resolvedUsername,
-                    password: resolvedPassword
-                )
-                print("Credential stored for server '\(server)' in the login keychain.")
-                #else
-                print("Keychain is not available on this platform.")
-                throw ExitCode.failure
-                #endif
-            }
-        }
-
-        struct Delete: ParsableCommand {
-            static let configuration = CommandConfiguration(
-                commandName: "delete",
-                abstract: "Remove IMAP credentials from the Keychain"
-            )
-
-            @Option(name: .long, help: "Server identifier")
-            var server: String
-
-            func run() throws {
-                #if canImport(Security)
-                let store = KeychainCredentialStore()
-                try store.delete(label: server)
-                print("Credential deleted.")
-                #else
-                print("Keychain is not available on this platform.")
-                throw ExitCode.failure
-                #endif
-            }
-        }
-
-        struct List: ParsableCommand {
-            static let configuration = CommandConfiguration(
-                commandName: "list",
-                abstract: "List stored IMAP credentials"
-            )
-
-            func run() throws {
-                #if canImport(Security)
-                let store = KeychainCredentialStore()
-                let credentials = try store.list()
-
-                if credentials.isEmpty {
-                    print("No credentials stored.")
-                    return
-                }
-
-                let idWidth = max("ID".count, credentials.map { $0.id.count }.max() ?? 0)
-                let userWidth = max("Username".count, credentials.map { $0.username.count }.max() ?? 0)
-
-                print("\(pad("ID", to: idWidth))  \(pad("Username", to: userWidth))  Host")
-                print("\(String(repeating: "-", count: idWidth))  \(String(repeating: "-", count: userWidth))  \(String(repeating: "-", count: 4))")
-
-                for cred in credentials {
-                    print("\(pad(cred.id, to: idWidth))  \(pad(cred.username, to: userWidth))  \(cred.host):\(cred.port)")
-                }
-                #else
-                print("Keychain is not available on this platform.")
-                throw ExitCode.failure
-                #endif
-            }
-        }
-
-    }
-
-    struct APIKey: ParsableCommand {
-        static let configuration = CommandConfiguration(
-            commandName: "api-key",
-            abstract: "Manage scoped API keys for MCP access",
-            subcommands: [Create.self, List.self, Delete.self]
-        )
-
-        struct Create: ParsableCommand {
-            static let configuration = CommandConfiguration(abstract: "Create an API key scoped to selected servers")
-
-            @Option(name: .long, help: "Allowed server IDs (comma-separated)")
-            var servers: String
-
-            func run() throws {
-                #if canImport(Security)
-                let serverIDs = servers
-                    .split(separator: ",")
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-
-                guard !serverIDs.isEmpty else {
-                    throw ValidationError("At least one server ID is required.")
-                }
-
-                let store = APIKeyStore()
-                let record = try store.createKey(allowedServerIDs: serverIDs)
-                print("API key: \(record.token)")
-                print("Allowed servers: \(record.allowedServerIDs.joined(separator: ", "))")
-                #else
-                print("API key management is not available on this platform.")
-                throw ExitCode.failure
-                #endif
-            }
-        }
-
-        struct List: ParsableCommand {
-            static let configuration = CommandConfiguration(abstract: "List stored API keys")
-
-            func run() throws {
-                #if canImport(Security)
-                let store = APIKeyStore()
-                let keys = try store.listKeys()
-
-                if keys.isEmpty {
-                    print("No API keys stored.")
-                    return
-                }
-
-                for key in keys {
-                    let iso = ISO8601DateFormatter().string(from: key.createdAt)
-                    let servers = key.allowedServerIDs.joined(separator: ", ")
-                    print("\(key.token)  \(iso)  [\(servers)]")
-                }
-                #else
-                print("API key management is not available on this platform.")
-                throw ExitCode.failure
-                #endif
-            }
-        }
-
-        struct Delete: ParsableCommand {
-            static let configuration = CommandConfiguration(abstract: "Delete a stored API key")
-
-            @Option(name: .long, help: "API key token (UUID)")
-            var token: String
-
-            func run() throws {
-                #if canImport(Security)
-                let store = APIKeyStore()
-                try store.delete(token: token)
-                print("API key deleted.")
-                #else
-                print("API key management is not available on this platform.")
-                throw ExitCode.failure
-                #endif
-            }
-        }
-    }
 }
 
 /// Reads a password from stdin with echo disabled.
-private func readPassword() -> String {
+func readPassword() -> String {
     #if canImport(Darwin)
     var oldTermios = termios()
     tcgetattr(STDIN_FILENO, &oldTermios)
@@ -1632,7 +150,7 @@ private func readPassword() -> String {
     return (readLine(strippingNewline: true) ?? "")
 }
 
-private func resolveRequiredValue(explicit: String?, fallback: String?, prompt: String) throws -> String {
+func resolveRequiredValue(explicit: String?, fallback: String?, prompt: String) throws -> String {
     if let explicit = explicit?.trimmingCharacters(in: .whitespacesAndNewlines), !explicit.isEmpty {
         return explicit
     }
@@ -1650,7 +168,7 @@ private func resolveRequiredValue(explicit: String?, fallback: String?, prompt: 
     return value
 }
 
-private func resolvePort(explicit: Int?, fallback: Int?, prompt: String, defaultValue: Int) throws -> Int {
+func resolvePort(explicit: Int?, fallback: Int?, prompt: String, defaultValue: Int) throws -> Int {
     if let explicit {
         return explicit
     }
@@ -1684,11 +202,11 @@ private enum PostCLIError: Error, LocalizedError {
     }
 }
 
-private struct ResultMessage: Codable {
+struct ResultMessage: Codable {
     let result: String
 }
 
-private struct JSONMessageHeader: Codable {
+struct JSONMessageHeader: Codable {
     let uid: Int
     let from: String
     let subject: String
@@ -1711,7 +229,7 @@ private extension MessageHeader {
     }
 }
 
-private func setProxyLogLevel(_ level: LogLevel, on proxy: MCPServerProxy) async throws {
+func setProxyLogLevel(_ level: LogLevel, on proxy: MCPServerProxy) async throws {
     let request = JSONRPCMessage.request(
         id: UUID().uuidString,
         method: "logging/setLevel",
@@ -1731,7 +249,7 @@ private func setProxyLogLevel(_ level: LogLevel, on proxy: MCPServerProxy) async
     }
 }
 
-private func withClient<T>(quiet: Bool = false, _ operation: (PostProxy) async throws -> T) async throws -> T {
+func withClient<T>(quiet: Bool = false, _ operation: (PostProxy) async throws -> T) async throws -> T {
     var stderrSaved: Int32 = -1
     var devNull: Int32 = -1
 
@@ -1778,7 +296,7 @@ private func withClient<T>(quiet: Bool = false, _ operation: (PostProxy) async t
     return try await operation(client)
 }
 
-private func resolveAPIToken() -> String? {
+func resolveAPIToken() -> String? {
     if let token = commandLineToken(), !token.isEmpty {
         return token
     }
@@ -1854,13 +372,13 @@ private func loadDotEnvValue(named key: String) -> String? {
     return nil
 }
 
-private extension MCPServerProxy {
+extension MCPServerProxy {
     func setAccessTokenMeta(_ token: String) {
         meta["accessToken"] = .string(token)
     }
 }
 
-private func outputJSON<T: Encodable>(_ value: T) {
+func outputJSON<T: Encodable>(_ value: T) {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     guard let data = try? encoder.encode(value), let string = String(data: data, encoding: .utf8) else {
@@ -1870,7 +388,7 @@ private func outputJSON<T: Encodable>(_ value: T) {
     print(string)
 }
 
-private func resolveServerID(explicit: String?, client: PostProxy) async throws -> String {
+func resolveServerID(explicit: String?, client: PostProxy) async throws -> String {
     if let explicit {
         return explicit
     }
@@ -1888,7 +406,7 @@ private func resolveServerID(explicit: String?, client: PostProxy) async throws 
     throw ValidationError("Multiple servers configured (\(servers.count)): --server is required. Available: \(available)")
 }
 
-private func printServersTable(_ servers: [ServerInfo]) {
+func printServersTable(_ servers: [ServerInfo]) {
     guard !servers.isEmpty else {
         print("No servers configured.")
         return
@@ -1915,7 +433,7 @@ private func printServersTable(_ servers: [ServerInfo]) {
     }
 }
 
-private func printMessageHeaders(_ messages: [MessageHeader]) {
+func printMessageHeaders(_ messages: [MessageHeader]) {
     guard !messages.isEmpty else {
         print("No messages found.")
         return
@@ -1966,7 +484,7 @@ private func printMessageDetail(_ message: MessageDetail) {
     }
 }
 
-private func printMailboxStatus(_ status: Mailbox.Status) {
+func printMailboxStatus(_ status: Mailbox.Status) {
     if let messageCount = status.messageCount {
         print("Messages: \(messageCount)")
     }
@@ -1984,7 +502,7 @@ private func printMailboxStatus(_ status: Mailbox.Status) {
     }
 }
 
-private func printQuotaInfo(_ quota: Quota) {
+func printQuotaInfo(_ quota: Quota) {
     for resource in quota.resources {
         if resource.resourceName.uppercased() == "STORAGE" {
             print("\(resource.resourceName): \(resource.usage) / \(resource.limit) KB")
@@ -1994,7 +512,7 @@ private func printQuotaInfo(_ quota: Quota) {
     }
 }
 
-private func decodeFetchHeaders(_ additionalHeaders: [String: String]?) -> [String: String] {
+func decodeFetchHeaders(_ additionalHeaders: [String: String]?) -> [String: String] {
     guard let additionalHeaders else { return [:] }
 
     var decoded: [String: String] = [:]
@@ -2010,7 +528,7 @@ private func decodeFetchHeaders(_ additionalHeaders: [String: String]?) -> [Stri
     return decoded
 }
 
-private func parseAdditionalHeaders(from emlData: Data) -> [String: String] {
+func parseAdditionalHeaders(from emlData: Data) -> [String: String] {
     guard let content = String(data: emlData, encoding: .utf8)
             ?? String(data: emlData, encoding: .isoLatin1) else {
         return [:]
@@ -2209,14 +727,14 @@ private func decodeBodyEscapesForCLI(_ value: String) -> String {
     return decoded
 }
 
-private func pad(_ value: String, to width: Int) -> String {
+func pad(_ value: String, to width: Int) -> String {
     guard value.count < width else {
         return value
     }
     return value + String(repeating: " ", count: width - value.count)
 }
 
-private func formatBytes(_ bytes: Int) -> String {
+func formatBytes(_ bytes: Int) -> String {
     if bytes < 1024 { return "\(bytes) B" }
     let kb = Double(bytes) / 1024
     if kb < 1024 { return String(format: "%.1f KB", kb) }
