@@ -1140,7 +1140,7 @@ public actor PostServer {
         }
     }
 
-    private func allowedServerIDsForCurrentSession() async throws -> Set<String>? {
+    internal func allowedServerIDsForCurrentSession() async throws -> Set<String>? {
         guard let session = Session.current else {
             return nil
         }
@@ -1171,12 +1171,12 @@ public actor PostServer {
         return allowedSet
     }
 
-    private func fetchAdditionalHeaders(for message: Message, using server: IMAPServer) async -> [String: String]? {
+    internal func fetchAdditionalHeaders(for message: Message, using server: IMAPServer) async -> [String: String]? {
         // SwiftMail 1.3.1+ populates additionalFields during fetchMessages
         return message.header.additionalFields
     }
 
-    private func collectHeaders(from stream: AsyncThrowingStream<Message, Error>) async throws -> [MessageHeader] {
+    internal func collectHeaders(from stream: AsyncThrowingStream<Message, Error>) async throws -> [MessageHeader] {
         var headers: [MessageHeader] = []
 
         for try await message in stream {
@@ -1186,7 +1186,7 @@ public actor PostServer {
         return headers
     }
 
-    private func messageHeader(from message: Message) -> MessageHeader {
+    internal func messageHeader(from message: Message) -> MessageHeader {
         MessageHeader(
             uid: messageUID(from: message),
             from: message.from ?? "Unknown",
@@ -1196,7 +1196,7 @@ public actor PostServer {
         )
     }
 
-    private func messageDetail(from message: Message, additionalHeaders: [String: String]? = nil) -> MessageDetail {
+    internal func messageDetail(from message: Message, additionalHeaders: [String: String]? = nil) -> MessageDetail {
         let attachments = message.attachments.map {
             AttachmentInfo(
                 filename: $0.filename ?? $0.suggestedFilename,
@@ -1242,7 +1242,7 @@ public actor PostServer {
         return formatter.string(from: date)
     }
 
-    private func parseISO8601Date(_ value: String, field: String) throws -> Date {
+    internal func parseISO8601Date(_ value: String, field: String) throws -> Date {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let withFractional = ISO8601DateFormatter()
@@ -1266,7 +1266,7 @@ public actor PostServer {
         throw PostServerError.invalidDate(field, value)
     }
 
-    private func parseFlags(_ value: String) throws -> [Flag] {
+    internal func parseFlags(_ value: String) throws -> [Flag] {
         let parsed = value
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -1300,7 +1300,7 @@ public actor PostServer {
         }
     }
 
-    private func specialUseDescription(for attributes: Mailbox.Info.Attributes) -> String? {
+    internal func specialUseDescription(for attributes: Mailbox.Info.Attributes) -> String? {
         var tags: [String] = []
 
         if attributes.contains(.inbox) { tags.append("\\Inbox") }
