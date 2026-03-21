@@ -7,13 +7,16 @@ public struct MessageHeader: Codable, Sendable {
     public let from: String
     public let subject: String
     public let date: String
-    public let flag: String?
+    public let flags: MessageFlags
+    
+    /// Deprecated: Use `flags.color` instead
+    public var flag: String? { flags.color?.rawValue }
 
-    public init(uid: Int, from: String, subject: String, date: String, flag: String? = nil) {
+    public init(uid: Int, from: String, subject: String, date: String, flags: MessageFlags) {
         self.uid = uid
         self.from = from
         self.subject = subject
         self.date = date
-        self.flag = flag
+        self.flags = flags
     }
 }

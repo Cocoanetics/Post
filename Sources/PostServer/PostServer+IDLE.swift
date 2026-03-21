@@ -275,7 +275,7 @@ extension PostServer {
                 from: info.from ?? "Unknown",
                 subject: info.subject ?? "(No Subject)",
                 date: formatHookDate(info.date),
-                flag: MailFlagColor(flags: info.flags)?.rawValue
+                flags: MessageFlags(info.flags)
             )
             return (header: header, info: info)
         }
@@ -724,7 +724,7 @@ extension PostServer {
                     from: info.from ?? "Unknown",
                     subject: info.subject ?? "(No Subject)",
                     date: formatDate(info.date),
-                    flag: MailFlagColor(flags: info.flags)?.rawValue
+                    flags: MessageFlags(info.flags)
                 )
             }
             return headers.sorted { $0.uid < $1.uid }

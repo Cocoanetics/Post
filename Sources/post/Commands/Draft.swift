@@ -34,14 +34,11 @@ extension PostCLI {
         @Option(name: .long, help: "Server identifier")
         var server: String?
 
-        @Option(name: .long, help: "Target mailbox (default: server's Drafts folder)")
+        @Option(name: .long, help: "Mailbox containing the message referenced by --replying-to (default: INBOX)")
         var mailbox: String?
 
         @Option(name: .long, help: "UID of an existing message to reply to (sets In-Reply-To and References headers)")
         var replyingTo: Int?
-
-        @Option(name: .long, help: "Mailbox containing the message referenced by --replying-to (default: INBOX)")
-        var replyMailbox: String?
 
         @ArgumentParser.Flag(name: .long, help: "Reply-all: include all original recipients in CC (only with --replying-to)")
         var replyAll: Bool = false
@@ -69,7 +66,7 @@ extension PostCLI {
                 var derivedBody: String? = nil
 
                 if let replyUID = replyingTo {
-                    let sourceMailbox = replyMailbox ?? "INBOX"
+                    let sourceMailbox = mailbox ?? "INBOX"
                     let messages = try await client.fetchMessage(
                         serverId: serverId,
                         uids: String(replyUID),
@@ -157,6 +154,8 @@ extension PostCLI {
                     format = .text
                 }
 
+                // Drafts always go to default Drafts folder
+                // --mailbox only specifies source mailbox when using --replying-to
                 let result = try await client.createDraft(
                     serverId: serverId,
                     from: fromAddress,
@@ -167,7 +166,7 @@ extension PostCLI {
                     cc: cc ?? derivedCC,
                     bcc: bcc,
                     attachments: attachments,
-                    mailbox: mailbox,
+                    mailbox: nil,
                     inReplyTo: inReplyTo,
                     references: references
                 )

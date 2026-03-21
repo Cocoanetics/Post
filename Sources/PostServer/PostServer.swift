@@ -24,6 +24,7 @@ public enum PostServerError: Error, LocalizedError, Sendable {
     case apiKeyRequired
     case invalidAPIKey
     case serverAccessDenied(serverId: String)
+    case noDraftsFolder(serverId: String)
 
     public var errorDescription: String? {
         switch self {
@@ -65,6 +66,8 @@ public enum PostServerError: Error, LocalizedError, Sendable {
             return "Invalid API key."
         case .serverAccessDenied(let serverId):
             return "API key is not authorized for server '\(serverId)'."
+        case .noDraftsFolder(let serverId):
+            return "No Drafts folder found on server '\(serverId)'. The server must have a mailbox with the \\Drafts special-use flag."
         }
     }
 }
@@ -860,8 +863,22 @@ public actor PostServer {
 
         return try await withServer(serverId: serverId) { server in
             _ = try await server.listSpecialUseMailboxes()
+            
+            // Determine target mailbox and validate Drafts exists if needed
+            let targetMailbox: String
+            if let mailbox {
+                targetMailbox = mailbox
+            } else {
+                // Validate that a Drafts folder exists (checks both \Drafts flag and common names)
+                do {
+                    let draftsMailbox = try await server.draftsFolder
+                    targetMailbox = draftsMailbox.name
+                } catch {
+                    throw PostServerError.noDraftsFolder(serverId: serverId)
+                }
+            }
+            
             let result = try await server.createDraft(from: email, in: mailbox)
-            let targetMailbox = mailbox ?? "Drafts"
             let uid = result.firstUID.map { Int($0.value) }
             return DraftResult(mailbox: targetMailbox, uid: uid)
         }
@@ -1192,7 +1209,7 @@ public actor PostServer {
             from: message.from ?? "Unknown",
             subject: message.subject ?? "(No Subject)",
             date: formatDate(message.date),
-            flag: MailFlagColor(flags: message.flags)?.rawValue
+            flags: MessageFlags(message.flags)
         )
     }
 
