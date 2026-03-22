@@ -26,7 +26,6 @@ public enum PostServerError: Error, LocalizedError, Sendable {
     case serverAccessDenied(serverId: String)
     case scopeRequired(scope: String)
     case noDraftsFolder(serverId: String)
-    case smtpNotConfigured(serverId: String)
 
     public var errorDescription: String? {
         switch self {
@@ -72,23 +71,6 @@ public enum PostServerError: Error, LocalizedError, Sendable {
             return "API key does not have required scope: '\(scope)'."
         case .noDraftsFolder(let serverId):
             return "No Drafts folder found on server '\(serverId)'. The server must have a mailbox with the \\Drafts special-use flag."
-        case .smtpNotConfigured(let serverId):
-            return """
-            SMTP is not configured for server '\(serverId)'.
-            
-            Add SMTP configuration to ~/.post.json:
-            {
-              "servers": {
-                "\(serverId)": {
-                  "smtp": {
-                    "host": "mail.example.com",
-                    "port": 587,
-                    "useTLS": false
-                  }
-                }
-              }
-            }
-            """
         }
     }
 }
@@ -993,20 +975,17 @@ public actor PostServer {
         // Check SMTP scope
         try await assertScopeAllowed("smtp")
         
-        // Get server configuration
-        let serverConfig = try await connectionManager.resolveServerConfiguration(serverId: serverId)
-        
-        guard let smtpConfig = serverConfig.smtp else {
-            throw PostServerError.smtpNotConfigured(serverId: serverId)
-        }
-        
-        // Get credentials (checks SMTP keychain first, falls back to IMAP)
+        // Get SMTP credentials (from config or keychain)
         let credentials = try await connectionManager.resolveSMTPCredentials(forServer: serverId)
+        
+        // Infer TLS mode from port
+        let useTLS = credentials.port == 465
+        let defaultPort = useTLS ? 465 : 587
         
         // Create SMTP server instance
         let smtp = SMTPServer(
-            host: smtpConfig.host,
-            port: smtpConfig.port ?? (smtpConfig.useTLS ? 465 : 587)
+            host: credentials.host,
+            port: credentials.port != 0 ? credentials.port : defaultPort
         )
         
         // Connect and authenticate with SMTP

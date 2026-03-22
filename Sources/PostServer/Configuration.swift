@@ -17,14 +17,10 @@ public struct PostConfiguration: Codable, Sendable {
     }
     
     public struct SMTPConfiguration: Codable, Sendable {
-      public let host: String
-      public let port: Int?
-      public let useTLS: Bool
+      public let credentials: Credentials?
       
-      public init(host: String, port: Int? = nil, useTLS: Bool = false) {
-        self.host = host
-        self.port = port
-        self.useTLS = useTLS
+      public init(credentials: Credentials? = nil) {
+        self.credentials = credentials
       }
     }
 

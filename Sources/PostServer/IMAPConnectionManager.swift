@@ -45,6 +45,19 @@ public actor IMAPConnectionManager {
     }
     
     public func resolveSMTPCredentials(forServer serverId: String) throws -> PostConfiguration.ResolvedCredentials {
+        let serverConfig = try resolveServerConfiguration(serverId: serverId)
+        
+        // Try config credentials first
+        if let smtp = serverConfig.smtp, let creds = smtp.credentials {
+            return PostConfiguration.ResolvedCredentials(
+                host: creds.host,
+                port: creds.port,
+                username: creds.username,
+                password: creds.password
+            )
+        }
+        
+        // Fall back to keychain
         #if canImport(Security)
         let store = KeychainCredentialStore()
         guard let (cred, password) = try? store.fullCredentials(forLabel: serverId, type: .smtp) else {
