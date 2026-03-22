@@ -151,7 +151,29 @@ extension PostCLI {
                 // Show next page hint
                 if let next = result.page.next {
                     print()
-                    print("To see more: post search --server \(serverId) --mailbox \(mailbox) --limit \(limit) --after-uid \(next.afterUid)")
+                    var hintParts = [
+                        "post search",
+                        "--server \(serverId)",
+                        "--mailbox \(mailbox)"
+                    ]
+                    
+                    // Include active filters
+                    if let from { hintParts.append("--from \(from)") }
+                    if let subject { hintParts.append("--subject \(subject)") }
+                    if let text { hintParts.append("--text \(text)") }
+                    if let since { hintParts.append("--since \(since)") }
+                    if let before { hintParts.append("--before \(before)") }
+                    if let header { hintParts.append("--header \(header)") }
+                    if let messageId { hintParts.append("--message-id \(messageId)") }
+                    if unseen { hintParts.append("--unseen") }
+                    if seen { hintParts.append("--seen") }
+                    if flagged { hintParts.append("--flagged") }
+                    if unflagged { hintParts.append("--unflagged") }
+                    
+                    hintParts.append("--limit \(limit)")
+                    hintParts.append("--after-uid \(next.afterUid)")
+                    
+                    print("To see more: \(hintParts.joined(separator: " "))")
                 }
             }
         }
