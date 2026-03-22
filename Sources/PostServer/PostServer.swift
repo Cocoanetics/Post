@@ -427,8 +427,12 @@ public actor PostServer {
             // Build UID range for cursor-based pagination
             var identifierSet: MessageIdentifierSet<UID>?
             if let afterUid {
+                // Validate cursor bounds (IMAP UID max is UInt32.max)
+                guard afterUid >= 0, afterUid < Int(UInt32.max) else {
+                    throw IMAPError.invalidArgument("afterUid \(afterUid) exceeds IMAP UID bounds (0..\(UInt32.max))")
+                }
                 // Only search UIDs greater than the cursor
-                identifierSet = MessageIdentifierSet(UID(afterUid + 1)...)
+                identifierSet = MessageIdentifierSet(UID(UInt32(afterUid + 1))...)
             }
 
             // Use extended search with PARTIAL for server-side paging.
