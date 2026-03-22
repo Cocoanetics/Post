@@ -176,6 +176,7 @@ public enum PostConfigurationError: Error, LocalizedError, Sendable {
   case noServersConfigured
   case unknownServer(String)
   case noCredentials(server: String)
+  case noSMTPCredentials(String)
   case legacyServerArrayFormatDetected(ids: [String])
 
   public var errorDescription: String? {
@@ -188,6 +189,9 @@ public enum PostConfigurationError: Error, LocalizedError, Sendable {
     case .noCredentials(let server):
       return
         "No credentials found for server '\(server)'. Use `post credential set --server \(server)` or add servers.\(server).credentials in ~/.post.json."
+    case .noSMTPCredentials(let server):
+      return
+        "No SMTP credentials found for server '\(server)'. Use `post credential set --server \(server) --smtp` to configure SMTP credentials separately."
     case .legacyServerArrayFormatDetected(let ids):
       let listedIDs = ids.isEmpty ? "<none>" : ids.joined(separator: ", ")
       return """
