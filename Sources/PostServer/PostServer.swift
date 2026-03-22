@@ -24,6 +24,7 @@ public enum PostServerError: Error, LocalizedError, Sendable {
     case apiKeyRequired
     case invalidAPIKey
     case serverAccessDenied(serverId: String)
+    case scopeRequired(scope: String)
     case noDraftsFolder(serverId: String)
     case smtpNotConfigured(serverId: String)
 
@@ -67,6 +68,8 @@ public enum PostServerError: Error, LocalizedError, Sendable {
             return "Invalid API key."
         case .serverAccessDenied(let serverId):
             return "API key is not authorized for server '\(serverId)'."
+        case .scopeRequired(let scope):
+            return "API key does not have required scope: '\(scope)'."
         case .noDraftsFolder(let serverId):
             return "No Drafts folder found on server '\(serverId)'. The server must have a mailbox with the \\Drafts special-use flag."
         case .smtpNotConfigured(let serverId):
@@ -174,6 +177,7 @@ public actor PostServer {
     internal var connectionManager: IMAPConnectionManager
     private let apiKeyStore = APIKeyStore()
     private var scopedServerIDsByToken: [String: Set<String>] = [:]
+    private var scopesByToken: [String: Set<String>] = [:]
     private var apiKeyScopesPrimed = false
     private var apiKeyRequiredForMCP = false
     internal let logger = Logger(label: "com.cocoanetics.Post.PostServer")
@@ -200,14 +204,18 @@ public actor PostServer {
     /// - Returns: Number of API keys loaded
     public func primeAPIKeyScopes() throws -> Int {
         let records = try apiKeyStore.listKeys()
-        var mapping: [String: Set<String>] = [:]
-        mapping.reserveCapacity(records.count)
+        var serverMapping: [String: Set<String>] = [:]
+        var scopeMapping: [String: Set<String>] = [:]
+        serverMapping.reserveCapacity(records.count)
+        scopeMapping.reserveCapacity(records.count)
 
         for record in records {
-            mapping[record.token] = Set(record.allowedServerIDs)
+            serverMapping[record.token] = Set(record.allowedServerIDs)
+            scopeMapping[record.token] = record.effectiveScopes
         }
 
-        scopedServerIDsByToken = mapping
+        scopedServerIDsByToken = serverMapping
+        scopesByToken = scopeMapping
         apiKeyScopesPrimed = true
         apiKeyRequiredForMCP = !records.isEmpty
         return records.count
@@ -982,6 +990,9 @@ public actor PostServer {
         uid: Int,
         serverId: String
     ) async throws {
+        // Check SMTP scope
+        try await assertScopeAllowed("smtp")
+        
         // Get server configuration
         let serverConfig = try await connectionManager.resolveServerConfiguration(serverId: serverId)
         
@@ -1247,6 +1258,7 @@ public actor PostServer {
     }
 
     internal func withServer<T: Sendable>(serverId: String, operation: (SwiftMail.IMAPServer) async throws -> T) async throws -> T {
+        try await assertScopeAllowed("imap")
         try await assertServerAccessAllowed(serverId)
 
         do {
@@ -1316,6 +1328,40 @@ public actor PostServer {
         let allowedSet = Set(allowedServerIDs)
         scopedServerIDsByToken[accessToken] = allowedSet
         return allowedSet
+    }
+    
+    private func assertScopeAllowed(_ scope: String) async throws {
+        guard let session = Session.current else {
+            return  // No session = no API key required
+        }
+        
+        guard let accessToken = await session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !accessToken.isEmpty else {
+            if apiKeyRequiredForMCP {
+                throw PostServerError.apiKeyRequired
+            }
+            return
+        }
+        
+        // Check cached scopes first
+        if let cached = scopesByToken[accessToken] {
+            guard cached.contains(scope) else {
+                throw PostServerError.scopeRequired(scope: scope)
+            }
+            return
+        }
+        
+        // Load from keychain if not cached
+        guard let record = try apiKeyStore.listKeys().first(where: { $0.token == accessToken }) else {
+            throw PostServerError.invalidAPIKey
+        }
+        
+        let scopes = record.effectiveScopes
+        scopesByToken[accessToken] = scopes
+        
+        guard scopes.contains(scope) else {
+            throw PostServerError.scopeRequired(scope: scope)
+        }
     }
 
     internal func fetchAdditionalHeaders(for message: Message, using server: SwiftMail.IMAPServer) async -> [String: String]? {

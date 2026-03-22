@@ -11,10 +11,13 @@ extension PostCLI {
         )
 
         struct Create: ParsableCommand {
-            static let configuration = CommandConfiguration(abstract: "Create an API key scoped to selected servers")
+            static let configuration = CommandConfiguration(abstract: "Create an API key scoped to selected servers and protocols")
 
             @Option(name: .long, help: "Allowed server IDs (comma-separated)")
             var servers: String
+            
+            @Option(name: .long, help: "Allowed scopes: imap, smtp (comma-separated). Default: imap")
+            var scopes: String?
 
             func run() throws {
                 #if canImport(Security)
@@ -26,11 +29,26 @@ extension PostCLI {
                 guard !serverIDs.isEmpty else {
                     throw ValidationError("At least one server ID is required.")
                 }
+                
+                let scopeList: [String]?
+                if let scopesStr = scopes {
+                    scopeList = scopesStr
+                        .split(separator: ",")
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                        .filter { $0 == "imap" || $0 == "smtp" }
+                    
+                    guard let list = scopeList, !list.isEmpty else {
+                        throw ValidationError("Invalid scopes. Use 'imap', 'smtp', or both.")
+                    }
+                } else {
+                    scopeList = nil  // Will default to ["imap"]
+                }
 
                 let store = APIKeyStore()
-                let record = try store.createKey(allowedServerIDs: serverIDs)
+                let record = try store.createKey(allowedServerIDs: serverIDs, scopes: scopeList)
                 print("API key: \(record.token)")
                 print("Allowed servers: \(record.allowedServerIDs.joined(separator: ", "))")
+                print("Scopes: \(record.effectiveScopes.sorted().joined(separator: ", "))")
                 #else
                 print("API key management is not available on this platform.")
                 throw ExitCode.failure
@@ -54,7 +72,8 @@ extension PostCLI {
                 for key in keys {
                     let iso = ISO8601DateFormatter().string(from: key.createdAt)
                     let servers = key.allowedServerIDs.joined(separator: ", ")
-                    print("\(key.token)  \(iso)  [\(servers)]")
+                    let scopes = key.effectiveScopes.sorted().joined(separator: ", ")
+                    print("\(key.token)  \(iso)  servers:[\(servers)]  scopes:[\(scopes)]")
                 }
                 #else
                 print("API key management is not available on this platform.")

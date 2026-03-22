@@ -13,7 +13,16 @@ public final class APIKeyStore: Sendable {
     public struct APIKeyRecord: Codable, Sendable {
         public let token: String
         public let allowedServerIDs: [String]
+        public let scopes: [String]?  // nil = ["imap"] for backward compatibility
         public let createdAt: Date
+        
+        /// Effective scopes with backward-compatible default
+        public var effectiveScopes: Set<String> {
+            if let scopes = scopes, !scopes.isEmpty {
+                return Set(scopes)
+            }
+            return ["imap"]  // Default: IMAP-only (safe)
+        }
     }
 
     public enum APIKeyStoreError: Error, LocalizedError {
@@ -33,11 +42,13 @@ public final class APIKeyStore: Sendable {
         }
     }
 
-    public func createKey(allowedServerIDs: [String]) throws -> APIKeyRecord {
+    public func createKey(allowedServerIDs: [String], scopes: [String]? = nil) throws -> APIKeyRecord {
         let normalized = Self.normalizeServerIDs(allowedServerIDs)
+        let normalizedScopes = scopes.map { Self.normalizeScopes($0) }
         let record = APIKeyRecord(
             token: UUID().uuidString.lowercased(),
             allowedServerIDs: normalized,
+            scopes: normalizedScopes,
             createdAt: Date()
         )
         try store(record)
@@ -119,7 +130,12 @@ public final class APIKeyStore: Sendable {
         }
 
         var storedRecord = record
-        storedRecord = APIKeyRecord(token: token, allowedServerIDs: Self.normalizeServerIDs(record.allowedServerIDs), createdAt: record.createdAt)
+        storedRecord = APIKeyRecord(
+            token: token,
+            allowedServerIDs: Self.normalizeServerIDs(record.allowedServerIDs),
+            scopes: record.scopes.map { Self.normalizeScopes($0) },
+            createdAt: record.createdAt
+        )
 
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -198,6 +214,18 @@ public final class APIKeyStore: Sendable {
         )
         .sorted()
     }
+    
+    private static func normalizeScopes(_ scopes: [String]) -> [String] {
+        let validScopes = Set(["imap", "smtp"])
+        return Array(
+            Set(
+                scopes
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                    .filter { validScopes.contains($0) }
+            )
+        )
+        .sorted()
+    }
 }
 #else
 import Foundation
@@ -208,7 +236,15 @@ public final class APIKeyStore: Sendable {
     public struct APIKeyRecord: Codable, Sendable {
         public let token: String
         public let allowedServerIDs: [String]
+        public let scopes: [String]?
         public let createdAt: Date
+        
+        public var effectiveScopes: Set<String> {
+            if let scopes = scopes, !scopes.isEmpty {
+                return Set(scopes)
+            }
+            return ["imap"]
+        }
     }
 
     public enum APIKeyStoreError: Error, LocalizedError {
@@ -222,8 +258,9 @@ public final class APIKeyStore: Sendable {
         }
     }
 
-    public func createKey(allowedServerIDs: [String]) throws -> APIKeyRecord {
+    public func createKey(allowedServerIDs: [String], scopes: [String]? = nil) throws -> APIKeyRecord {
         _ = allowedServerIDs
+        _ = scopes
         throw APIKeyStoreError.unsupportedPlatform
     }
 
