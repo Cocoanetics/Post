@@ -989,8 +989,8 @@ public actor PostServer {
             throw PostServerError.smtpNotConfigured(serverId: serverId)
         }
         
-        // Get credentials from configuration (IMAP credentials will be reused for SMTP)
-        let credentials = try await connectionManager.resolveCredentials(forServer: serverId)
+        // Get credentials (checks SMTP keychain first, falls back to IMAP)
+        let credentials = try await connectionManager.resolveSMTPCredentials(forServer: serverId)
         
         // Create SMTP server instance
         let smtp = SMTPServer(
