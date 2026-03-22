@@ -10,10 +10,14 @@ extension PostCLI {
             Sends a draft email via SMTP and moves it to the Sent folder.
             
             This command:
-            1. Fetches the draft from the Drafts mailbox
+            1. Fetches the draft from the Drafts mailbox (auto-detected)
             2. Sends it via SMTP (preserving threading headers)
-            3. Appends the sent message to the Sent folder
+            3. Appends the sent message to the Sent folder (auto-detected)
             4. Permanently deletes the draft (EXPUNGE, not trash)
+            
+            Mailbox discovery:
+            - Drafts: checks \\Drafts flag, falls back to name matching
+            - Sent: checks \\Sent flag, falls back to name matching
             
             Safety: Sending must be explicitly enabled in server configuration
             with `allowSending: true`. Use --yes to skip confirmation prompt.
@@ -24,9 +28,6 @@ extension PostCLI {
               
               # Send without confirmation
               post send 1234 --server drobnik --yes
-              
-              # Custom mailbox names
-              post send 1234 --server drobnik --draft-mailbox Drafts --sent-mailbox Sent
             """
         )
 
@@ -35,12 +36,6 @@ extension PostCLI {
 
         @Option(name: .long, help: "Server identifier")
         var server: String?
-
-        @Option(name: .long, help: "Draft mailbox name (default: Drafts)")
-        var draftMailbox: String = "Drafts"
-
-        @Option(name: .long, help: "Sent mailbox name (default: Sent)")
-        var sentMailbox: String = "Sent"
 
         @Flag(name: .long, help: "Skip confirmation prompt")
         var yes: Bool = false
@@ -59,10 +54,12 @@ extension PostCLI {
                 Dependency: https://github.com/Cocoanetics/SwiftMail/issues/132
                 
                 Once SwiftMail #132 is merged, this command will:
-                1. Fetch draft message (UID \(uid)) from \(draftMailbox)
-                2. Send via SMTP with updated Date and Message-Id headers
-                3. APPEND to \(sentMailbox) with \\Seen flag
-                4. Permanently EXPUNGE draft from \(draftMailbox)
+                1. Auto-detect Drafts folder (\\Drafts flag or name matching)
+                2. Fetch draft message (UID \(uid))
+                3. Send via SMTP with updated Date and Message-Id headers
+                4. Auto-detect Sent folder (\\Sent flag or name matching)
+                5. APPEND to Sent with \\Seen flag
+                6. Permanently EXPUNGE draft from Drafts
                 
                 Server configuration required:
                 {
