@@ -25,6 +25,7 @@ public enum PostServerError: Error, LocalizedError, Sendable {
     case invalidAPIKey
     case serverAccessDenied(serverId: String)
     case noDraftsFolder(serverId: String)
+    case smtpNotConfigured(serverId: String)
 
     public var errorDescription: String? {
         switch self {
@@ -68,6 +69,23 @@ public enum PostServerError: Error, LocalizedError, Sendable {
             return "API key is not authorized for server '\(serverId)'."
         case .noDraftsFolder(let serverId):
             return "No Drafts folder found on server '\(serverId)'. The server must have a mailbox with the \\Drafts special-use flag."
+        case .smtpNotConfigured(let serverId):
+            return """
+            SMTP is not configured for server '\(serverId)'.
+            
+            Add SMTP configuration to ~/.post.json:
+            {
+              "servers": {
+                "\(serverId)": {
+                  "smtp": {
+                    "host": "mail.example.com",
+                    "port": 587,
+                    "useTLS": false
+                  }
+                }
+              }
+            }
+            """
         }
     }
 }
@@ -942,6 +960,58 @@ public actor PostServer {
             let uid = result.firstUID.map { Int($0.value) }
             return DraftResult(mailbox: targetMailbox, uid: uid)
         }
+    }
+    
+    /// Sends a draft email via SMTP.
+    /// 
+    /// This method orchestrates the full send workflow:
+    /// 1. Auto-detects Drafts folder (checks \\Drafts flag, falls back to name matching)
+    /// 2. Fetches the draft message
+    /// 3. Sends via SMTP (preserving threading headers)
+    /// 4. Auto-detects Sent folder (checks \\Sent flag, falls back to name matching)
+    /// 5. Appends the sent message to Sent with \\Seen flag
+    /// 6. Permanently expunges the draft from Drafts
+    ///
+    /// - Parameters:
+    ///   - uid: UID of the draft message to send
+    ///   - serverId: Server identifier
+    ///
+    /// - Throws: `PostServerError` if the server is not found or SMTP is not configured
+    @MCPTool
+    public func sendDraft(
+        uid: Int,
+        serverId: String
+    ) async throws {
+        // Get server configuration
+        let serverConfig = try await connectionManager.resolveServerConfiguration(serverId: serverId)
+        
+        guard let smtpConfig = serverConfig.smtp else {
+            throw PostServerError.smtpNotConfigured(serverId: serverId)
+        }
+        
+        // Get credentials from configuration (IMAP credentials will be reused for SMTP)
+        let credentials = try await connectionManager.resolveCredentials(forServer: serverId)
+        
+        // Create SMTP server instance
+        let smtp = SMTPServer(
+            host: smtpConfig.host,
+            port: smtpConfig.port ?? (smtpConfig.useTLS ? 465 : 587)
+        )
+        
+        // Connect and authenticate with SMTP
+        try await smtp.connect()
+        try await smtp.login(username: credentials.username, password: credentials.password)
+        
+        // Send the draft via SwiftMail's sendDraft orchestrator
+        _ = try await withServer(serverId: serverId) { server in
+            try await server.sendDraft(
+                uid: UID(UInt32(uid)),
+                via: smtp
+            )
+        }
+        
+        // Disconnect SMTP
+        try await smtp.disconnect()
     }
 
     /// Watches IMAP IDLE events in real time. Events are delivered as MCP log notifications.

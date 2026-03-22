@@ -15,20 +15,34 @@ public struct PostConfiguration: Codable, Sendable {
         self.password = password
       }
     }
+    
+    public struct SMTPConfiguration: Codable, Sendable {
+      public let host: String
+      public let port: Int?
+      public let useTLS: Bool
+      
+      public init(host: String, port: Int? = nil, useTLS: Bool = false) {
+        self.host = host
+        self.port = port
+        self.useTLS = useTLS
+      }
+    }
 
     public let command: String?
     public let idle: Bool?
     public let idleMailbox: String?
     public let credentials: Credentials?
+    public let smtp: SMTPConfiguration?
 
     public init(
       command: String? = nil, idle: Bool? = nil, idleMailbox: String? = nil,
-      credentials: Credentials? = nil
+      credentials: Credentials? = nil, smtp: SMTPConfiguration? = nil
     ) {
       self.command = command
       self.idle = idle
       self.idleMailbox = idleMailbox
       self.credentials = credentials
+      self.smtp = smtp
     }
   }
 

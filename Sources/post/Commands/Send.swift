@@ -44,38 +44,47 @@ extension PostCLI {
         var globals: GlobalOptions
 
         mutating func run() async throws {
-            let serverId = try resolveServerID(from: server)
-
-            // TODO: Implement once SwiftMail #132 (SMTP support) lands
-            throw PostError.notImplemented(
-                """
-                The 'post send' command requires SMTP support in SwiftMail.
+            try await withClient { client in
+                let serverId = try await post.resolveServerID(explicit: server, client: client)
                 
-                Dependency: https://github.com/Cocoanetics/SwiftMail/issues/132
+                // TODO: Add confirmation prompt unless --yes is set
+                // if !yes {
+                //     print("Send draft \(uid) from \(serverId)? [y/N]: ", terminator: "")
+                //     let response = readLine() ?? "n"
+                //     guard response.lowercased() == "y" else {
+                //         print("Cancelled.")
+                //         return
+                //     }
+                // }
                 
-                Once SwiftMail #132 is merged, this command will:
-                1. Auto-detect Drafts folder (\\Drafts flag or name matching)
-                2. Fetch draft message (UID \(uid))
-                3. Send via SMTP with updated Date and Message-Id headers
-                4. Auto-detect Sent folder (\\Sent flag or name matching)
-                5. APPEND to Sent with \\Seen flag
-                6. Permanently EXPUNGE draft from Drafts
-                
-                Server configuration required:
-                {
-                  "servers": {
-                    "\(serverId)": {
-                      "smtp": {
-                        "host": "mail.example.com",
-                        "port": 587,
-                        "useTLS": false  // STARTTLS
-                      },
-                      "allowSending": true  // Safety: must opt-in
+                do {
+                    try await client.sendDraft(
+                        uid: uid,
+                        serverId: serverId
+                    )
+                    
+                    if globals.json {
+                        struct SendResult: Codable {
+                            let status: String
+                            let uid: Int
+                        }
+                        outputJSON(SendResult(status: "sent", uid: uid))
+                    } else {
+                        print("✓ Draft \(uid) sent successfully")
                     }
-                  }
+                } catch {
+                    if globals.json {
+                        struct SendError: Codable {
+                            let status: String
+                            let message: String
+                        }
+                        outputJSON(SendError(status: "error", message: error.localizedDescription))
+                    } else {
+                        print("Error: \(error.localizedDescription)")
+                    }
+                    throw error
                 }
-                """
-            )
+            }
         }
 
         private func resolveServerID(from server: String?) throws -> String {

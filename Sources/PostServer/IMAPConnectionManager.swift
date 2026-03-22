@@ -39,6 +39,10 @@ public actor IMAPConnectionManager {
         }
         return config
     }
+    
+    public func resolveCredentials(forServer serverId: String) throws -> PostConfiguration.ResolvedCredentials {
+        try configuration.resolveCredentials(forServer: serverId)
+    }
 
     /// Returns a cached primary IMAPServer instance for the given serverId.
     ///
