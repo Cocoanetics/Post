@@ -21,7 +21,7 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.4.0")),
+        .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.4.2")),
         .package(url: "https://github.com/Cocoanetics/SwiftMail", .upToNextMajor(from: "1.4.0")),
         .package(url: "https://github.com/Cocoanetics/SwiftText", .upToNextMajor(from: "1.1.4")),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
@@ -29,7 +29,7 @@ let package = Package(
     ],
     targets: [
         .plugin(
-            name: "VersionGeneratorPlugin",
+            name: "PostVersionGeneratorPlugin",
             capability: .buildTool()
         ),
         .target(
@@ -41,7 +41,7 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log")
             ],
             plugins: [
-                .plugin(name: "VersionGeneratorPlugin")
+                .plugin(name: "PostVersionGeneratorPlugin")
             ]
         ),
         .executableTarget(

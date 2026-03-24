@@ -1,13 +1,13 @@
 {
-  "originHash" : "cb4353e0c805cf96edef6ec72141a3c8db9b7b1e6e54226982ff4b449f95cb23",
+  "originHash" : "91ca5a9cd0b08ecb60e955ae7604fd467bbcc0bec496ff11f6e003631408bfd0",
   "pins" : [
     {
       "identity" : "swift-argument-parser",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-argument-parser",
       "state" : {
-        "revision" : "c5d11a805e765f52ba34ec7284bd4fcd6ba68615",
-        "version" : "1.7.0"
+        "revision" : "626b5b7b2f45e1b0b1c6f4a309296d1d21d7311b",
+        "version" : "1.7.1"
       }
     },
     {
@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-asn1.git",
       "state" : {
-        "revision" : "810496cf121e525d660cd0ea89a758740476b85f",
-        "version" : "1.5.1"
+        "revision" : "9f542610331815e29cc3821d3b6f488db8715517",
+        "version" : "1.6.0"
       }
     },
     {
@@ -42,8 +42,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-collections.git",
       "state" : {
-        "revision" : "8d9834a6189db730f6264db7556a7ffb751e99ee",
-        "version" : "1.4.0"
+        "revision" : "6675bc0ff86e61436e615df6fc5174e043e57924",
+        "version" : "1.4.1"
       }
     },
     {
@@ -78,8 +78,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio",
       "state" : {
-        "revision" : "b31565862a8f39866af50bc6676160d8dda7de35",
-        "version" : "2.96.0"
+        "revision" : "bdf004b44f77c56fca752cd1cf243c802f8469c9",
+        "version" : "2.97.0"
       }
     },
     {
@@ -96,8 +96,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio-ssl",
       "state" : {
-        "revision" : "173cc69a058623525a58ae6710e2f5727c663793",
-        "version" : "2.36.0"
+        "revision" : "df9c3406028e3297246e6e7081977a167318b692",
+        "version" : "2.36.1"
       }
     },
     {
@@ -141,8 +141,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftMCP",
       "state" : {
-        "revision" : "b5dc227a4caf43abc38724352de311017721b383",
-        "version" : "1.4.0"
+        "revision" : "0c65e979e0d982df43718efdf82183abb4fe5cb6",
+        "version" : "1.4.2"
       }
     },
     {
@@ -150,8 +150,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftText",
       "state" : {
-        "revision" : "2ac990255cc755c3a9866e6f21ea386601baeafa",
-        "version" : "1.1.4"
+        "revision" : "f77064d638018d69b3d0182f6496b85d61564fdb",
+        "version" : "1.1.6"
       }
     },
     {
