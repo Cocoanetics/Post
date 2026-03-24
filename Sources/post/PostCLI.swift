@@ -113,6 +113,7 @@ struct PostCLI: AsyncParsableCommand {
             Quota.self,
             Attachment.self,
             Draft.self,
+            Send.self,
             PDF.self,
             Idle.self
         ]

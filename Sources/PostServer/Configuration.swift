@@ -15,20 +15,30 @@ public struct PostConfiguration: Codable, Sendable {
         self.password = password
       }
     }
+    
+    public struct SMTPConfiguration: Codable, Sendable {
+      public let credentials: Credentials?
+      
+      public init(credentials: Credentials? = nil) {
+        self.credentials = credentials
+      }
+    }
 
     public let command: String?
     public let idle: Bool?
     public let idleMailbox: String?
     public let credentials: Credentials?
+    public let smtp: SMTPConfiguration?
 
     public init(
       command: String? = nil, idle: Bool? = nil, idleMailbox: String? = nil,
-      credentials: Credentials? = nil
+      credentials: Credentials? = nil, smtp: SMTPConfiguration? = nil
     ) {
       self.command = command
       self.idle = idle
       self.idleMailbox = idleMailbox
       self.credentials = credentials
+      self.smtp = smtp
     }
   }
 
@@ -162,6 +172,7 @@ public enum PostConfigurationError: Error, LocalizedError, Sendable {
   case noServersConfigured
   case unknownServer(String)
   case noCredentials(server: String)
+  case noSMTPCredentials(String)
   case legacyServerArrayFormatDetected(ids: [String])
 
   public var errorDescription: String? {
@@ -174,6 +185,9 @@ public enum PostConfigurationError: Error, LocalizedError, Sendable {
     case .noCredentials(let server):
       return
         "No credentials found for server '\(server)'. Use `post credential set --server \(server)` or add servers.\(server).credentials in ~/.post.json."
+    case .noSMTPCredentials(let server):
+      return
+        "No SMTP credentials found for server '\(server)'. Use `post credential set --server \(server) --smtp` to configure SMTP credentials separately."
     case .legacyServerArrayFormatDetected(let ids):
       let listedIDs = ids.isEmpty ? "<none>" : ids.joined(separator: ", ")
       return """

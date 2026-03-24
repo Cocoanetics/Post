@@ -4,33 +4,39 @@ import Security
 
 private let keychainLock = NSLock()
 
-/// Manages IMAP credentials in the user's default Keychain (login keychain).
+/// Manages IMAP and SMTP credentials in the user's default Keychain (login keychain).
 ///
 /// Uses `kSecClassInternetPassword` entries with native attributes
 /// (server, port, account, protocol, label) and tags items with
-/// `kSecAttrDescription = "Post IMAP"` for filtering.
+/// `kSecAttrDescription = "Post IMAP"` or `"Post SMTP"` for filtering.
 ///
 /// Note: Older versions of Post used a dedicated keychain file `~/.post.keychain-db`.
 /// That approach requires deprecated `SecKeychain*` APIs and can lead to repeated
 /// SecurityAgent prompts if the custom keychain is locked. The current implementation
 /// stores secrets in the default keychain to avoid those issues.
 public final class KeychainCredentialStore: Sendable {
-    /// Human-readable tag used to filter Post credentials.
+    /// Credential type for keychain entries
+    public enum CredentialType: String, Sendable {
+        case imap = "Post IMAP"
+        case smtp = "Post SMTP"
+    }
+    
+    /// Human-readable tag used to filter Post IMAP credentials.
     public static let itemDescription = "Post IMAP"
 
     public init() {}
 
     // MARK: - Public API
 
-    /// Stores or updates IMAP credentials for a server ID.
-    public func store(id: String, host: String, port: Int, username: String, password: String) throws {
+    /// Stores or updates credentials for a server ID.
+    public func store(id: String, host: String, port: Int, username: String, password: String, type: CredentialType = .imap) throws {
         keychainLock.lock()
         defer { keychainLock.unlock() }
 
-        let protocolAttr = protocolAttribute(for: port)
+        let protocolAttr = protocolAttribute(for: port, type: type)
 
         // Delete existing if present, then re-add
-        try? delete(label: id)
+        try? delete(label: id, type: type)
 
         let attrs: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
@@ -39,7 +45,7 @@ public final class KeychainCredentialStore: Sendable {
             kSecAttrAccount as String: username,
             kSecAttrProtocol as String: protocolAttr,
             kSecAttrLabel as String: id,
-            kSecAttrDescription as String: Self.itemDescription,
+            kSecAttrDescription as String: type.rawValue,
             kSecValueData as String: password.data(using: .utf8) ?? Data()
         ]
 
@@ -50,14 +56,14 @@ public final class KeychainCredentialStore: Sendable {
     }
 
     /// Retrieves a full credential by server ID label, including password.
-    public func fullCredentials(forLabel id: String) throws -> (credential: FullCredential, password: String)? {
+    public func fullCredentials(forLabel id: String, type: CredentialType = .imap) throws -> (credential: FullCredential, password: String)? {
         keychainLock.lock()
         defer { keychainLock.unlock() }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
             kSecAttrLabel as String: id,
-            kSecAttrDescription as String: Self.itemDescription,
+            kSecAttrDescription as String: type.rawValue,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecReturnAttributes as String: true,
             kSecReturnData as String: true
@@ -86,14 +92,14 @@ public final class KeychainCredentialStore: Sendable {
     }
 
     /// Deletes the credential for a server ID label.
-    public func delete(label: String) throws {
+    public func delete(label: String, type: CredentialType = .imap) throws {
         keychainLock.lock()
         defer { keychainLock.unlock() }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
             kSecAttrLabel as String: label,
-            kSecAttrDescription as String: Self.itemDescription
+            kSecAttrDescription as String: type.rawValue
         ]
 
         let status = SecItemDelete(query as CFDictionary)
@@ -105,14 +111,14 @@ public final class KeychainCredentialStore: Sendable {
         }
     }
 
-    /// Lists all stored Post IMAP credentials (without passwords).
-    public func list() throws -> [StoredCredential] {
+    /// Lists all stored Post credentials (without passwords).
+    public func list(type: CredentialType = .imap) throws -> [StoredCredential] {
         keychainLock.lock()
         defer { keychainLock.unlock() }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
-            kSecAttrDescription as String: Self.itemDescription,
+            kSecAttrDescription as String: type.rawValue,
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true
         ]
@@ -171,11 +177,17 @@ public final class KeychainCredentialStore: Sendable {
 
     // MARK: - Private
 
-    private func protocolAttribute(for port: Int) -> CFString {
-        switch port {
-        case 993: return kSecAttrProtocolIMAPS
-        case 143: return kSecAttrProtocolIMAP
-        default: return kSecAttrProtocolIMAPS
+    private func protocolAttribute(for port: Int, type: CredentialType) -> CFString {
+        switch type {
+        case .imap:
+            switch port {
+            case 993: return kSecAttrProtocolIMAPS
+            case 143: return kSecAttrProtocolIMAP
+            default: return kSecAttrProtocolIMAPS
+            }
+        case .smtp:
+            // Note: Security framework only defines kSecAttrProtocolSMTP (no SMTPS variant)
+            return kSecAttrProtocolSMTP
         }
     }
 }
