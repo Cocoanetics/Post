@@ -117,8 +117,8 @@ extension PostCLI {
         func run() async throws {
             let operation = try resolvedOperation()
 
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
+            try await PostProxy.withClient { client in
+                let serverId = try await server.resolveServerID(using: client)
                 let result: String
 
                 switch operation {
@@ -175,7 +175,7 @@ extension PostCLI {
                 }
 
                 if globals.json {
-                    outputJSON(ResultMessage(result: result))
+                    ResultMessage(result: result).printAsJSON()
                     return
                 }
                 print(result)

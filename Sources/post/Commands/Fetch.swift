@@ -58,7 +58,7 @@ extension PostCLI {
             client: PostProxy,
             serverId: String
         ) async -> [String: String] {
-            let decoded = decodeFetchHeaders(message.additionalHeaders)
+            let decoded = message.additionalHeaders.decodedFetchHeaders()
             if !decoded.isEmpty {
                 return filterHeaders(decoded)
             }
@@ -68,7 +68,7 @@ extension PostCLI {
                 return decoded
             }
 
-            return filterHeaders(decodeFetchHeaders(parseAdditionalHeaders(from: emlData)))
+            return filterHeaders(emlData.parsedAdditionalHeaders().decodedFetchHeaders())
         }
 
         /// Filters out transport, routing, cryptographic, and ESP tracking headers
@@ -111,8 +111,8 @@ extension PostCLI {
         }
 
         func run() async throws {
-            try await withClient(quiet: globals.json) { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
+            try await PostProxy.withClient(quiet: globals.json) { client in
+                let serverId = try await server.resolveServerID(using: client)
                 guard let uidSet = MessageIdentifierSet<UID>(string: uid) else {
                     throw ValidationError("Invalid UID set '\(uid)'. Use comma-separated values or ranges (e.g. 1-3,5,10-20).")
                 }
@@ -200,12 +200,12 @@ extension PostCLI {
                 }
 
                 if foundCount == 0 {
-                    printError("Error: No messages found\n")
+                    "Error: No messages found\n".writeToStandardError()
                     throw ExitCode.failure
                 }
 
                 if globals.json, !eml {
-                    outputJSON(jsonMessages)
+                    jsonMessages.printAsJSON()
                 }
             }
         }

@@ -13,16 +13,16 @@ extension PostCLI {
         func run() async throws {
             let tcpConfig = MCPServerTcpConfig(serviceName: PostProxy.serverName)
             let proxy = MCPServerProxy(config: .tcp(config: tcpConfig))
-            if let token = resolveAPIToken() {
+            if let token = ProcessInfo.processInfo.resolvedPostAPIToken() {
                 await proxy.setAccessTokenMeta(token)
             }
 
             await proxy.setLogNotificationHandler(IdleEventLogger())
 
             try await proxy.connect()
-            try await setProxyLogLevel(.debug, on: proxy)
+            try await proxy.setLogLevel(.debug)
 
-            printError("Connected to postd. Watching IDLE events (Ctrl+C to stop)...\n")
+            "Connected to postd. Watching IDLE events (Ctrl+C to stop)...\n".writeToStandardError()
 
             let client = PostProxy(proxy: proxy)
             do {
@@ -30,7 +30,7 @@ extension PostCLI {
             } catch is CancellationError {
                 // Expected on Ctrl+C
             } catch {
-                printError("\(error.localizedDescription)\n")
+                "\(error.localizedDescription)\n".writeToStandardError()
                 await proxy.disconnect()
                 _Exit(1)
             }

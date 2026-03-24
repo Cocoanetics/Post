@@ -13,12 +13,12 @@ extension PostCLI {
         var globals: GlobalOptions
 
         func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
+            try await PostProxy.withClient { client in
+                let serverId = try await server.resolveServerID(using: client)
                 let folders = try await client.listFolders(serverId: serverId)
 
                 if globals.json {
-                    outputJSON(folders)
+                    folders.printAsJSON()
                     return
                 }
 

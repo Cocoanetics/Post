@@ -79,8 +79,8 @@ extension PostCLI {
         }
 
         func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
+            try await PostProxy.withClient { client in
+                let serverId = try await server.resolveServerID(using: client)
                 var headerField: String?
                 var headerValue: String?
                 if let messageId {
@@ -135,7 +135,7 @@ extension PostCLI {
                             next: result.page.next.map { NextOutput(afterUid: $0.afterUid) }
                         )
                     )
-                    outputJSON(output)
+                    output.printAsJSON()
                     return
                 }
                 
@@ -146,7 +146,7 @@ extension PostCLI {
                 print("Showing \(result.page.returned) result(s)")
                 print()
                 
-                printMessageHeaders(result.messages)
+                result.messages.printHeaders()
                 
                 // Show next page hint
                 if let next = result.page.next {

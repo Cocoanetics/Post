@@ -22,8 +22,8 @@ extension PostCLI {
         var globals: GlobalOptions
 
         func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
+            try await PostProxy.withClient { client in
+                let serverId = try await server.resolveServerID(using: client)
                 let message = try await client.moveMessages(
                     serverId: serverId,
                     uids: uids,
@@ -31,7 +31,7 @@ extension PostCLI {
                     mailbox: mailbox
                 )
                 if globals.json {
-                    outputJSON(ResultMessage(result: message))
+                    ResultMessage(result: message).printAsJSON()
                     return
                 }
                 print(message)

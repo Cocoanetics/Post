@@ -44,8 +44,8 @@ extension PostCLI {
         var globals: GlobalOptions
 
         mutating func run() async throws {
-            try await withClient { client in
-                let serverId = try await post.resolveServerID(explicit: server, client: client)
+            try await PostProxy.withClient { client in
+                let serverId = try await server.resolveServerID(using: client)
                 
                 // TODO: Add confirmation prompt unless --yes is set
                 // if !yes {
@@ -68,7 +68,7 @@ extension PostCLI {
                             let status: String
                             let uid: Int
                         }
-                        outputJSON(SendResult(status: "sent", uid: uid))
+                        SendResult(status: "sent", uid: uid).printAsJSON()
                     } else {
                         print("✓ Draft \(uid) sent successfully")
                     }
@@ -78,20 +78,13 @@ extension PostCLI {
                             let status: String
                             let message: String
                         }
-                        outputJSON(SendError(status: "error", message: error.localizedDescription))
+                        SendError(status: "error", message: error.localizedDescription).printAsJSON()
                     } else {
                         print("Error: \(error.localizedDescription)")
                     }
                     throw error
                 }
             }
-        }
-
-        private func resolveServerID(from server: String?) throws -> String {
-            if let server {
-                return server
-            }
-            throw PostError.validationError("No server specified. Use --server <id>")
         }
     }
 }

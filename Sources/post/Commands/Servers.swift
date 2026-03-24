@@ -10,13 +10,13 @@ extension PostCLI {
         var globals: GlobalOptions
 
         func run() async throws {
-            try await withClient { client in
+            try await PostProxy.withClient { client in
                 let servers = try await client.listServers()
                 if globals.json {
-                    outputJSON(servers)
+                    servers.printAsJSON()
                     return
                 }
-                printServersTable(servers)
+                servers.printTable()
             }
         }
     }

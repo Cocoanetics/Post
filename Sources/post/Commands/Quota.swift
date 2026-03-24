@@ -16,14 +16,14 @@ extension PostCLI {
         var globals: GlobalOptions
 
         func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
+            try await PostProxy.withClient { client in
+                let serverId = try await server.resolveServerID(using: client)
                 let quota = try await client.getQuota(serverId: serverId, mailbox: mailbox)
                 if globals.json {
-                    outputJSON(quota)
+                    quota.printAsJSON()
                     return
                 }
-                printQuotaInfo(quota)
+                quota.printDetails()
             }
         }
     }

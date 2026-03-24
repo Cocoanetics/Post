@@ -38,24 +38,11 @@ extension PostCLI {
                 }
 
                 let fallbackCredentials = config?.server(withID: server)?.credentials
-                let resolvedHost = try resolveRequiredValue(
-                    explicit: host,
-                    fallback: fallbackCredentials?.host,
-                    prompt: "Host"
-                )
+                let resolvedHost = try host.resolvedRequiredValue(fallback: fallbackCredentials?.host, prompt: "Host")
 
-                let resolvedPort = try resolvePort(
-                    explicit: port,
-                    fallback: fallbackCredentials?.port,
-                    prompt: "Port",
-                    defaultValue: 993
-                )
+                let resolvedPort = try port.resolvedPort(fallback: fallbackCredentials?.port, prompt: "Port", defaultValue: 993)
 
-                let resolvedUsername = try resolveRequiredValue(
-                    explicit: username,
-                    fallback: fallbackCredentials?.username,
-                    prompt: "Username"
-                )
+                let resolvedUsername = try username.resolvedRequiredValue(fallback: fallbackCredentials?.username, prompt: "Username")
 
                 let resolvedPassword: String
                 if let explicitPassword = password?.trimmingCharacters(in: .whitespacesAndNewlines), !explicitPassword.isEmpty {
@@ -64,7 +51,7 @@ extension PostCLI {
                     resolvedPassword = fallbackPassword
                 } else {
                     print("Password: ", terminator: "")
-                    resolvedPassword = readPassword()
+                    resolvedPassword = String.readPassword()
                 }
 
                 guard !resolvedPassword.isEmpty else {
@@ -128,11 +115,11 @@ extension PostCLI {
                 let idWidth = max("ID".count, credentials.map { $0.id.count }.max() ?? 0)
                 let userWidth = max("Username".count, credentials.map { $0.username.count }.max() ?? 0)
 
-                print("\(pad("ID", to: idWidth))  \(pad("Username", to: userWidth))  Host")
+                print("\("ID".padded(to: idWidth))  \("Username".padded(to: userWidth))  Host")
                 print("\(String(repeating: "-", count: idWidth))  \(String(repeating: "-", count: userWidth))  \(String(repeating: "-", count: 4))")
 
                 for cred in credentials {
-                    print("\(pad(cred.id, to: idWidth))  \(pad(cred.username, to: userWidth))  \(cred.host):\(cred.port)")
+                    print("\(cred.id.padded(to: idWidth))  \(cred.username.padded(to: userWidth))  \(cred.host):\(cred.port)")
                 }
                 #else
                 print("Keychain is not available on this platform.")

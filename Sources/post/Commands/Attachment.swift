@@ -22,8 +22,8 @@ extension PostCLI {
         var output: String = "."
 
         func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
+            try await PostProxy.withClient { client in
+                let serverId = try await server.resolveServerID(using: client)
                 let attachment = try await client.downloadAttachment(serverId: serverId, uid: uid, filename: filename, mailbox: mailbox)
 
                 guard let data = Data(base64Encoded: attachment.data) else {
@@ -38,7 +38,7 @@ extension PostCLI {
                 let destination = isExplicitFile ? outURL : outputDir.appendingPathComponent(attachment.filename)
                 let displayName = destination.lastPathComponent
                 try data.write(to: destination)
-                print("Saved \(displayName) (\(attachment.contentType), \(formatBytes(attachment.size))) to \(destination.path)")
+                print("Saved \(displayName) (\(attachment.contentType), \(attachment.size.formattedAsBytes())) to \(destination.path)")
             }
         }
     }

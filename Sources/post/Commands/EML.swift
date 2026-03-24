@@ -82,7 +82,7 @@ extension PostCLI {
                     date: detail.date,
                     body: formattedBody
                 )
-                outputJSON([output])
+                [output].printAsJSON()
             } else {
                 print(formattedBody)
             }

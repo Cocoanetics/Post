@@ -18,7 +18,7 @@ extension PostCLI {
         @Option(
             name: .long,
             help: "Body text or file path. Existing files are read; inline values decode escapes and auto-detect as HTML, Markdown, or plain text. Optional when using --replying-to (creates empty draft for inline editing).",
-            transform: resolveDraftBodyInputForCLI
+            transform: { try $0.resolvedDraftBodyInputForCLI() }
         )
         var body: String?
 
@@ -52,8 +52,8 @@ extension PostCLI {
                 throw ValidationError("Missing required option '--body' (omit only when using --replying-to for inline editing)")
             }
 
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
+            try await PostProxy.withClient { client in
+                let serverId = try await server.resolveServerID(using: client)
                 let attachments = attach.isEmpty ? nil : attach.joined(separator: ",")
 
                 // Resolve reply threading headers and auto-derive fields if --replying-to is set
@@ -145,7 +145,7 @@ extension PostCLI {
                 // Resolve final body and detect format
                 let finalBody = body ?? derivedBody ?? ""
                 let format: PostServer.BodyFormat
-                switch detectDraftBodyInputFormat(finalBody) {
+                switch finalBody.detectedDraftBodyInputFormat() {
                 case .html:
                     format = .html
                 case .markdown:
@@ -171,7 +171,7 @@ extension PostCLI {
                     references: references
                 )
                 if globals.json {
-                    outputJSON(result)
+                    result.printAsJSON()
                     return
                 }
                 if let uid = result.uid {

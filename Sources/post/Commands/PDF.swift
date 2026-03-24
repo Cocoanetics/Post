@@ -29,8 +29,8 @@ extension PostCLI {
         }
 
         func run() async throws {
-            try await withClient { client in
-                let serverId = try await resolveServerID(explicit: server, client: client)
+            try await PostProxy.withClient { client in
+                let serverId = try await server.resolveServerID(using: client)
                 guard let uidSet = MessageIdentifierSet<UID>(string: uid) else {
                     throw ValidationError("Invalid UID set '\(uid)'.")
                 }
@@ -51,19 +51,19 @@ extension PostCLI {
                     let uidValue = Int(messageUID.value)
                     let result = try await client.exportPDF(serverId: serverId, uid: uidValue, mailbox: mailbox)
                     guard let data = Data(base64Encoded: result.data) else {
-                        printError("Error: Failed to decode PDF for UID \(uidValue)\n")
+                        "Error: Failed to decode PDF for UID \(uidValue)\n".writeToStandardError()
                         continue
                     }
 
                     let destination = isExplicitFile ? outURL : outputDir.appendingPathComponent(result.filename)
                     let displayName = destination.lastPathComponent
                     try data.write(to: destination)
-                    print("Saved \(displayName) (\(formatBytes(result.size))) to \(destination.path)")
+                    print("Saved \(displayName) (\(result.size.formattedAsBytes())) to \(destination.path)")
                     foundCount += 1
                 }
 
                 if foundCount == 0 {
-                    printError("Error: No PDFs exported\n")
+                    "Error: No PDFs exported\n".writeToStandardError()
                     throw ExitCode.failure
                 }
             }
