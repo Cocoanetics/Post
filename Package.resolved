@@ -1,5 +1,5 @@
 {
-  "originHash" : "91ca5a9cd0b08ecb60e955ae7604fd467bbcc0bec496ff11f6e003631408bfd0",
+  "originHash" : "126d0f45284f54673b6b9acd97bf7f88dd53426dba92ac34ec1ca63c714987b7",
   "pins" : [
     {
       "identity" : "swift-argument-parser",
@@ -69,17 +69,17 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-log.git",
       "state" : {
-        "revision" : "bbd81b6725ae874c69e9b8c8804d462356b55523",
-        "version" : "1.10.1"
+        "revision" : "8c0f217f01000dd30f60d6e536569ad4e74291f9",
+        "version" : "1.11.0"
       }
     },
     {
       "identity" : "swift-nio",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-nio",
+      "location" : "https://github.com/apple/swift-nio.git",
       "state" : {
-        "revision" : "bdf004b44f77c56fca752cd1cf243c802f8469c9",
-        "version" : "2.97.0"
+        "revision" : "558f24a4647193b5a0e2104031b71c55d31ff83a",
+        "version" : "2.97.1"
       }
     },
     {
@@ -132,8 +132,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftMail",
       "state" : {
-        "revision" : "fce26cb21e890f2f5df648fd6db24774f121521b",
-        "version" : "1.4.0"
+        "revision" : "89b9257a3caa654b813e497202f76f987976bedd",
+        "version" : "1.5.0"
       }
     },
     {
