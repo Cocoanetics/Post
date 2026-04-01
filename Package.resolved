@@ -132,8 +132,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftMail",
       "state" : {
-        "revision" : "89b9257a3caa654b813e497202f76f987976bedd",
-        "version" : "1.5.0"
+        "revision" : "9ba877f2e2cdb943deb0344de31a730cdcc2c862",
+        "version" : "1.5.1"
       }
     },
     {
