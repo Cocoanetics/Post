@@ -1,5 +1,5 @@
 {
-  "originHash" : "126d0f45284f54673b6b9acd97bf7f88dd53426dba92ac34ec1ca63c714987b7",
+  "originHash" : "9e459ddba52dfc52b2503ff0eb580ea6a7064f9315d11e98e217ed744f76fb15",
   "pins" : [
     {
       "identity" : "swift-argument-parser",
@@ -141,8 +141,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftMCP",
       "state" : {
-        "revision" : "0c65e979e0d982df43718efdf82183abb4fe5cb6",
-        "version" : "1.4.2"
+        "revision" : "7a5fde819f037a376ba9354487255c23c90f40b0",
+        "version" : "1.4.3"
       }
     },
     {

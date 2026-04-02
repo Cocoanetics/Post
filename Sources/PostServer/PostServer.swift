@@ -763,7 +763,7 @@ public actor PostServer {
         }
     }
 
-    /// Downloads the raw RFC 822 source of a single message as .eml data.
+    /// Downloads the raw RFC 822 source of a single message as binary data.
     /// - Parameter serverId: The server identifier
     /// - Parameter uid: The message UID
     /// - Parameter mailbox: Mailbox name (default: "INBOX")
