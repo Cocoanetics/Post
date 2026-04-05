@@ -1,5 +1,6 @@
 import Foundation
 import SwiftMCP
+import SwiftTextCore
 import SwiftTextHTML
 
 @Schema
@@ -55,11 +56,12 @@ extension MessageDetail {
     public func markdown() async throws -> String {
         if let htmlBody, !htmlBody.isEmpty {
             let converter = HTMLToMarkdown(data: Data(htmlBody.utf8))
-            return try await converter.markdown()
+            let raw = try await converter.markdown()
+            return UnicodeAbuseSanitizer.sanitize(raw).text
         }
 
         if let textBody, !textBody.isEmpty {
-            return textBody
+            return UnicodeAbuseSanitizer.sanitize(textBody).text
         }
 
         return ""
