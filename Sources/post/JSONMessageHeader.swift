@@ -6,12 +6,15 @@ struct JSONMessageHeader: Codable {
     let subject: String
     let date: String
     let flags: [String]
+    let unicodeAbuse: String?
 
     init(_ message: MessageHeader) {
+        let subject = message.sanitizedSubject()
         uid = message.uid
         from = message.from
-        subject = message.subject
+        self.subject = subject.text
         date = message.date
         flags = message.flags.array
+        unicodeAbuse = subject.unicodeAbuse
     }
 }

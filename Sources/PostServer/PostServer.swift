@@ -120,6 +120,7 @@ public actor PostServer {
         let date: Date
         let subject: String
         let markdown: String?
+        let unicodeAbuse: String?
         let flags: [String]
         let attachments: [HookAttachmentPayload]
         let headers: [String: String]
@@ -131,6 +132,7 @@ public actor PostServer {
             case date
             case subject
             case markdown
+            case unicodeAbuse
             case flags
             case attachments
             case headers
@@ -144,6 +146,7 @@ public actor PostServer {
             try container.encode(date, forKey: .date)
             try container.encode(subject, forKey: .subject)
             try container.encode(markdown ?? "", forKey: .markdown)
+            try container.encodeIfPresent(unicodeAbuse, forKey: .unicodeAbuse)
             try container.encode(flags, forKey: .flags)
             try container.encode(attachments, forKey: .attachments)
             try container.encode(headers, forKey: .headers)

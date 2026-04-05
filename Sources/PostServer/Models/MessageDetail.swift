@@ -51,19 +51,35 @@ public struct MessageDetail: Codable, Sendable {
 }
 
 extension MessageDetail {
+    public func sanitizedSubject() -> SanitizedText {
+        UnicodeAbuseSummary.sanitize(subject, field: "Subject")
+    }
+
+    public func sanitizedTextBody() -> SanitizedText {
+        UnicodeAbuseSummary.sanitize(textBody ?? "", field: "Body")
+    }
+
+    public func sanitizedHTMLBody() -> SanitizedText {
+        UnicodeAbuseSummary.sanitize(htmlBody ?? textBody ?? "", field: "Body")
+    }
+
     /// Returns the message body as markdown.
     /// Converts HTML to markdown when available, falls back to plain text.
     public func markdown() async throws -> String {
+        try await markdownSanitized().text
+    }
+
+    public func markdownSanitized() async throws -> SanitizedText {
         if let htmlBody, !htmlBody.isEmpty {
             let converter = HTMLToMarkdown(data: Data(htmlBody.utf8))
             let raw = try await converter.markdown()
-            return UnicodeAbuseSanitizer.sanitize(raw).text
+            return UnicodeAbuseSummary.sanitize(raw, field: "Body")
         }
 
         if let textBody, !textBody.isEmpty {
-            return UnicodeAbuseSanitizer.sanitize(textBody).text
+            return UnicodeAbuseSummary.sanitize(textBody, field: "Body")
         }
 
-        return ""
+        return SanitizedText(text: "")
     }
 }
