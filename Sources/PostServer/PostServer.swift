@@ -1362,12 +1362,15 @@ public actor PostServer {
     }
 
     internal func messageHeader(from message: Message) -> MessageHeader {
-        MessageHeader(
+        let sanitizedSubject = UnicodeAbuseSummary.sanitize(message.subject ?? "(No Subject)", field: "Subject")
+
+        return MessageHeader(
             uid: messageUID(from: message),
             from: message.from ?? "Unknown",
-            subject: message.subject ?? "(No Subject)",
+            subject: sanitizedSubject.text,
             date: formatDate(message.date),
-            flags: MessageFlags(message.flags)
+            flags: MessageFlags(message.flags),
+            unicodeAbuse: sanitizedSubject.unicodeAbuse
         )
     }
 
@@ -1383,20 +1386,28 @@ public actor PostServer {
         let referencesString = message.header.references?.map { $0.description }.joined(separator: " ")
 
         let filteredHeaders = Self.filterNoiseHeaders(additionalHeaders ?? message.header.additionalFields ?? [:])
+        let sanitizedSubject = UnicodeAbuseSummary.sanitize(message.subject ?? "(No Subject)", field: "Subject")
+        let sanitizedTextBody = message.textBody.map { UnicodeAbuseSummary.sanitize($0, field: "Body") }
+        let sanitizedHTMLBody = message.htmlBody.map { UnicodeAbuseSummary.sanitize($0, field: "Body") }
 
         return MessageDetail(
             uid: messageUID(from: message),
             from: message.from ?? "Unknown",
             to: message.to,
             cc: message.cc.isEmpty ? nil : message.cc,
-            subject: message.subject ?? "(No Subject)",
+            subject: sanitizedSubject.text,
             date: formatDate(message.date),
-            textBody: message.textBody,
-            htmlBody: message.htmlBody,
+            textBody: sanitizedTextBody?.text,
+            htmlBody: sanitizedHTMLBody?.text,
             attachments: attachments,
             additionalHeaders: filteredHeaders.isEmpty ? nil : filteredHeaders,
             messageId: messageId,
-            references: referencesString
+            references: referencesString,
+            unicodeAbuse: UnicodeAbuseSummary.combine([
+                sanitizedSubject.unicodeAbuse,
+                sanitizedTextBody?.unicodeAbuse,
+                sanitizedHTMLBody?.unicodeAbuse
+            ])
         )
     }
 

@@ -20,6 +20,8 @@ public struct MessageDetail: Codable, Sendable {
     public let messageId: String?
     /// The References header value (RFC 822, space-separated Message-IDs)
     public let references: String?
+    /// Optional description of Unicode abuse removed from subject and/or body.
+    public let unicodeAbuse: String?
 
     public init(
         uid: Int,
@@ -33,7 +35,8 @@ public struct MessageDetail: Codable, Sendable {
         attachments: [AttachmentInfo],
         additionalHeaders: [String: String]? = nil,
         messageId: String? = nil,
-        references: String? = nil
+        references: String? = nil,
+        unicodeAbuse: String? = nil
     ) {
         self.uid = uid
         self.from = from
@@ -47,6 +50,7 @@ public struct MessageDetail: Codable, Sendable {
         self.additionalHeaders = additionalHeaders
         self.messageId = messageId
         self.references = references
+        self.unicodeAbuse = unicodeAbuse
     }
 }
 
