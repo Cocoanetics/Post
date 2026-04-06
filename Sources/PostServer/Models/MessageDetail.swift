@@ -1,5 +1,6 @@
 import Foundation
 import SwiftMCP
+import SwiftTextCore
 import SwiftTextHTML
 
 @Schema
@@ -19,6 +20,8 @@ public struct MessageDetail: Codable, Sendable {
     public let messageId: String?
     /// The References header value (RFC 822, space-separated Message-IDs)
     public let references: String?
+    /// Optional description of Unicode abuse removed from subject and/or body.
+    public let unicodeAbuse: String?
 
     public init(
         uid: Int,
@@ -32,7 +35,8 @@ public struct MessageDetail: Codable, Sendable {
         attachments: [AttachmentInfo],
         additionalHeaders: [String: String]? = nil,
         messageId: String? = nil,
-        references: String? = nil
+        references: String? = nil,
+        unicodeAbuse: String? = nil
     ) {
         self.uid = uid
         self.from = from
@@ -46,22 +50,40 @@ public struct MessageDetail: Codable, Sendable {
         self.additionalHeaders = additionalHeaders
         self.messageId = messageId
         self.references = references
+        self.unicodeAbuse = unicodeAbuse
     }
 }
 
 extension MessageDetail {
+    public func sanitizedSubject() -> SanitizedText {
+        UnicodeAbuseSummary.sanitize(subject, field: "Subject")
+    }
+
+    public func sanitizedTextBody() -> SanitizedText {
+        UnicodeAbuseSummary.sanitize(textBody ?? "", field: "Body")
+    }
+
+    public func sanitizedHTMLBody() -> SanitizedText {
+        UnicodeAbuseSummary.sanitize(htmlBody ?? textBody ?? "", field: "Body")
+    }
+
     /// Returns the message body as markdown.
     /// Converts HTML to markdown when available, falls back to plain text.
     public func markdown() async throws -> String {
+        try await markdownSanitized().text
+    }
+
+    public func markdownSanitized() async throws -> SanitizedText {
         if let htmlBody, !htmlBody.isEmpty {
             let converter = HTMLToMarkdown(data: Data(htmlBody.utf8))
-            return try await converter.markdown()
+            let raw = try await converter.markdown()
+            return UnicodeAbuseSummary.sanitize(raw, field: "Body")
         }
 
         if let textBody, !textBody.isEmpty {
-            return textBody
+            return UnicodeAbuseSummary.sanitize(textBody, field: "Body")
         }
 
-        return ""
+        return SanitizedText(text: "")
     }
 }

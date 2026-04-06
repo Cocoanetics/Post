@@ -26,6 +26,7 @@ extension PostCLI {
             let subject: String
             let date: String
             let body: String
+            let unicodeAbuse: String?
         }
 
         func run() async throws {
@@ -64,27 +65,31 @@ extension PostCLI {
             )
 
             // Format body according to option
-            let formattedBody: String
+            let formattedBody: SanitizedText
             switch body {
             case .text:
-                formattedBody = detail.textBody ?? ""
+                formattedBody = detail.sanitizedTextBody()
             case .html:
-                formattedBody = detail.htmlBody ?? detail.textBody ?? ""
+                formattedBody = detail.sanitizedHTMLBody()
             case .markdown:
-                formattedBody = try await detail.markdown()
+                formattedBody = try await detail.markdownSanitized()
             }
+
+            let subject = detail.sanitizedSubject()
+            let unicodeAbuse = UnicodeAbuseSummary.combine([subject.unicodeAbuse, formattedBody.unicodeAbuse])
 
             if globals.json {
                 let output = EMLOutput(
                     from: detail.from,
                     to: detail.to,
-                    subject: detail.subject,
+                    subject: subject.text,
                     date: detail.date,
-                    body: formattedBody
+                    body: formattedBody.text,
+                    unicodeAbuse: unicodeAbuse
                 )
                 [output].printAsJSON()
             } else {
-                print(formattedBody)
+                print(formattedBody.text)
             }
         }
     }

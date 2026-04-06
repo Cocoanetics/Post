@@ -347,7 +347,10 @@ extension PostServer {
         let replyTo = extractReplyTo(from: decodedAdditionalHeaders)
         let decodedFrom = decodeHeaderValue(messageInfo.from ?? header.from)
         let decodedTo = decodeRecipientList(messageInfo.to)
-        let decodedSubject = decodeHeaderValue(messageInfo.subject ?? header.subject)
+        let decodedSubject = UnicodeAbuseSummary.sanitize(
+            decodeHeaderValue(messageInfo.subject ?? header.subject),
+            field: "Subject"
+        )
         let attachmentParts = messageInfo.parts.filter(isAttachmentPart)
         let attachments: [HookAttachmentPayload] = attachmentParts.map { part in
             let filename = canonicalAttachmentFilename(part)
@@ -368,7 +371,7 @@ extension PostServer {
             from: decodedFrom,
             to: decodedTo,
             replyTo: replyTo,
-            subject: decodedSubject,
+            subject: decodedSubject.text,
             date: formatHookDate(resolvedDate)
         )
         return HookMessagePayload(
@@ -378,8 +381,9 @@ extension PostServer {
             to: decodedTo,
             replyTo: replyTo,
             date: resolvedDate,
-            subject: decodedSubject,
-            markdown: markdown,
+            subject: decodedSubject.text,
+            markdown: markdown?.text,
+            unicodeAbuse: UnicodeAbuseSummary.combine([decodedSubject.unicodeAbuse, markdown?.unicodeAbuse]),
             flags: messageInfo.flags.map(Self.flagToString),
             attachments: attachments,
             headers: headers
@@ -406,6 +410,7 @@ extension PostServer {
         header: MessageHeader
     ) async -> HookMessagePayload {
         guard (1...Int(UInt32.max)).contains(header.uid) else {
+            let subject = UnicodeAbuseSummary.sanitize(decodeHeaderValue(header.subject), field: "Subject")
             return HookMessagePayload(
                 uid: header.uid,
                 mailbox: mailbox,
@@ -413,8 +418,9 @@ extension PostServer {
                 to: [],
                 replyTo: nil,
                 date: resolveHookDate(messageDate: nil, headerDate: header.date),
-                subject: decodeHeaderValue(header.subject),
+                subject: subject.text,
                 markdown: nil,
+                unicodeAbuse: subject.unicodeAbuse,
                 flags: [],
                 attachments: [],
                 headers: [:]
@@ -425,6 +431,7 @@ extension PostServer {
             _ = try await connection.selectMailbox(mailbox)
             let identifier = UID(UInt32(header.uid))
             guard let messageInfo = try await connection.fetchMessageInfo(for: identifier) else {
+                let subject = UnicodeAbuseSummary.sanitize(decodeHeaderValue(header.subject), field: "Subject")
                 return HookMessagePayload(
                     uid: header.uid,
                     mailbox: mailbox,
@@ -432,8 +439,9 @@ extension PostServer {
                     to: [],
                     replyTo: nil,
                     date: resolveHookDate(messageDate: nil, headerDate: header.date),
-                    subject: decodeHeaderValue(header.subject),
+                    subject: subject.text,
                     markdown: nil,
+                    unicodeAbuse: subject.unicodeAbuse,
                     flags: [],
                     attachments: [],
                     headers: [:]
@@ -452,7 +460,10 @@ extension PostServer {
             let replyTo = extractReplyTo(from: decodedAdditionalHeaders)
             let decodedFrom = decodeHeaderValue(messageInfo.from ?? header.from)
             let decodedTo = decodeRecipientList(messageInfo.to)
-            let decodedSubject = decodeHeaderValue(messageInfo.subject ?? header.subject)
+            let decodedSubject = UnicodeAbuseSummary.sanitize(
+                decodeHeaderValue(messageInfo.subject ?? header.subject),
+                field: "Subject"
+            )
             let attachmentParts = messageInfo.parts.filter(isAttachmentPart)
             let attachments: [HookAttachmentPayload] = attachmentParts.map { part in
                 let filename = canonicalAttachmentFilename(part)
@@ -473,7 +484,7 @@ extension PostServer {
                 from: decodedFrom,
                 to: decodedTo,
                 replyTo: replyTo,
-                subject: decodedSubject,
+                subject: decodedSubject.text,
                 date: formatHookDate(resolvedDate)
             )
             return HookMessagePayload(
@@ -483,8 +494,9 @@ extension PostServer {
                 to: decodedTo,
                 replyTo: replyTo,
                 date: resolvedDate,
-                subject: decodedSubject,
-                markdown: markdown,
+                subject: decodedSubject.text,
+                markdown: markdown?.text,
+                unicodeAbuse: UnicodeAbuseSummary.combine([decodedSubject.unicodeAbuse, markdown?.unicodeAbuse]),
                 flags: messageInfo.flags.map(Self.flagToString),
                 attachments: attachments,
                 headers: headers
@@ -493,6 +505,7 @@ extension PostServer {
             Self.logDiagnostic("ERROR failed to fetch hook message details for \(mailbox) uid=\(header.uid): \(String(describing: error))")
         }
 
+        let subject = UnicodeAbuseSummary.sanitize(decodeHeaderValue(header.subject), field: "Subject")
         return HookMessagePayload(
             uid: header.uid,
             mailbox: mailbox,
@@ -500,8 +513,9 @@ extension PostServer {
             to: [],
             replyTo: nil,
             date: resolveHookDate(messageDate: nil, headerDate: header.date),
-            subject: decodeHeaderValue(header.subject),
+            subject: subject.text,
             markdown: nil,
+            unicodeAbuse: subject.unicodeAbuse,
             flags: [],
             attachments: [],
             headers: [:]
@@ -527,7 +541,7 @@ extension PostServer {
     /// Fetches ALL RFC 822 headers by fetching the raw message and parsing headers.
     /// This is a workaround for SwiftMail not populating MessageInfo.additionalFields.
     /// Produces markdown by fetching only text/html body parts (no attachment download).
-    fileprivate static func fetchHookMarkdown(using connection: IMAPNamedConnection, messageInfo: MessageInfo) async -> String? {
+    fileprivate static func fetchHookMarkdown(using connection: IMAPNamedConnection, messageInfo: MessageInfo) async -> SanitizedText? {
         let textPart = messageInfo.parts.first { part in
             part.contentType.lowercased().hasPrefix("text/plain")
                 && part.disposition?.lowercased() != "attachment"
@@ -585,7 +599,7 @@ extension PostServer {
         )
 
         do {
-            return try await detail.markdown()
+            return try await detail.markdownSanitized()
         } catch {
             let uid = messageInfo.uid?.value ?? 0
             Self.logDiagnostic("ERROR failed to convert body to markdown uid=\(uid): \(String(describing: error))")
@@ -609,7 +623,7 @@ extension PostServer {
                 }
             }
             
-            return textBody
+            return UnicodeAbuseSummary.sanitize(textBody ?? "", field: "Body")
         }
     }
 

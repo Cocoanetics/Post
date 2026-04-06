@@ -42,14 +42,14 @@ extension PostCLI {
             }
         }
 
-        private func formatBody(_ message: MessageDetail) async throws -> String {
+        private func formatBody(_ message: MessageDetail) async throws -> SanitizedText {
             switch body {
             case .text:
-                return message.textBody ?? ""
+                return message.sanitizedTextBody()
             case .html:
-                return message.htmlBody ?? message.textBody ?? ""
+                return message.sanitizedHTMLBody()
             case .markdown:
-                return try await message.markdown()
+                return try await message.markdownSanitized()
             }
         }
 
@@ -94,17 +94,25 @@ extension PostCLI {
             let subject: String
             let date: String
             let body: String
+            let unicodeAbuse: String?
             let headers: [String: String]
             let attachments: [AttachmentInfo]?
 
-            init(detail: MessageDetail, mailbox: String, formattedBody: String, headers: [String: String]) {
+            init(
+                detail: MessageDetail,
+                mailbox: String,
+                subject: SanitizedText,
+                body: SanitizedText,
+                headers: [String: String]
+            ) {
                 self.uid = detail.uid
                 self.mailbox = mailbox
                 self.from = detail.from
                 self.to = detail.to
-                self.subject = detail.subject
+                self.subject = subject.text
                 self.date = detail.date
-                self.body = formattedBody
+                self.body = body.text
+                self.unicodeAbuse = UnicodeAbuseSummary.combine([subject.unicodeAbuse, body.unicodeAbuse])
                 self.headers = headers
                 self.attachments = detail.attachments.isEmpty ? nil : detail.attachments
             }
@@ -169,31 +177,33 @@ extension PostCLI {
 
                     for message in messages {
                         let formattedBody = try await formatBody(message)
+                        let subject = message.sanitizedSubject()
 
                         if globals.json {
                             let headers = await resolveHeaders(for: message, client: client, serverId: serverId)
                             jsonMessages.append(FormattedMessage(
                                 detail: message,
                                 mailbox: mailbox,
-                                formattedBody: formattedBody,
+                                subject: subject,
+                                body: formattedBody,
                                 headers: headers
                             ))
                         } else if let outputDir {
                             let filename = "\(message.uid).txt"
                             let destination = outputDir.appendingPathComponent(filename)
-                            try formattedBody.write(to: destination, atomically: true, encoding: .utf8)
+                            try formattedBody.text.write(to: destination, atomically: true, encoding: .utf8)
                             print("Saved \(filename) to \(destination.path)")
                         } else {
                             print("UID: \(message.uid)")
                             print("From: \(message.from)")
                             print("To: \(message.to.joined(separator: ", "))")
-                            print("Subject: \(message.subject)")
+                            print("Subject: \(subject.text)")
                             print("Date: \(message.date)")
                             if !message.attachments.isEmpty {
                                 print("Attachments: \(message.attachments.map(\.filename).joined(separator: ", "))")
                             }
                             print()
-                            print(formattedBody)
+                            print(formattedBody.text)
                             print()
                         }
                     }

@@ -10,7 +10,8 @@ extension Array where Element == MessageHeader {
         for message in self {
             let dateText = message.date.isEmpty ? "Unknown Date" : message.date
             let fromText = message.from.isEmpty ? "Unknown" : message.from
-            let subjectText = message.subject.isEmpty ? "(No Subject)" : message.subject
+            let sanitizedSubject = message.sanitizedSubject().text
+            let subjectText = sanitizedSubject.isEmpty ? "(No Subject)" : sanitizedSubject
 
             print("[\(message.uid)] \(dateText) - \(fromText)")
             print("   \(subjectText)")
