@@ -126,7 +126,7 @@ extension PostCLI {
                 }
 
                 let outURL: URL? = output.map { URL(fileURLWithPath: $0) }
-                let isExplicitFile = outURL?.pathExtension.count ?? 0 > 0
+                let isExplicitFile = Self.isExplicitOutputFile(outURL)
                 let uidArray = uidSet.toArray()
 
                 if isExplicitFile && uidArray.count > 1 {
@@ -218,6 +218,17 @@ extension PostCLI {
                     jsonMessages.printAsJSON()
                 }
             }
+        }
+
+        static func isExplicitOutputFile(_ url: URL?, fileManager: FileManager = .default) -> Bool {
+            guard let url else { return false }
+
+            var isDirectory: ObjCBool = false
+            if fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
+                return false
+            }
+
+            return !url.pathExtension.isEmpty
         }
     }
 }
