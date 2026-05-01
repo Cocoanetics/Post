@@ -47,7 +47,8 @@ post fetch 12199 --server gmail --mailbox Archive   # Specific server + mailbox
 ```bash
 post attachment 12199                                # Download first attachment
 post attachment 12199 --filename "invoice.pdf"       # Download specific file
-post attachment 12199 --out ./downloads              # Custom output directory
+post attachment 12199 --cid "image-content-id"       # Download inline CID asset
+post attachment 12199 --output ./downloads           # Custom output directory
 ```
 
 ### Searching

@@ -12,6 +12,9 @@ extension PostCLI {
         @Option(name: .long, help: "Attachment filename (downloads first if omitted)")
         var filename: String?
 
+        @Option(name: .long, help: "Content-ID of an inline attachment to download")
+        var cid: String?
+
         @Option(name: .long, help: "Server identifier")
         var server: String?
 
@@ -21,10 +24,16 @@ extension PostCLI {
         @Option(name: .long, help: "Output path — directory or filename (default: current directory)")
         var output: String = "."
 
+        func validate() throws {
+            if filename != nil && cid != nil {
+                throw ValidationError("Use either --filename or --cid, not both.")
+            }
+        }
+
         func run() async throws {
             try await PostProxy.withClient { client in
                 let serverId = try await server.resolveServerID(using: client)
-                let attachment = try await client.downloadAttachment(serverId: serverId, uid: uid, filename: filename, mailbox: mailbox)
+                let attachment = try await client.downloadAttachment(serverId: serverId, uid: uid, filename: filename, cid: cid, mailbox: mailbox)
 
                 guard let data = Data(base64Encoded: attachment.data) else {
                     print("Error: Failed to decode attachment data.")
