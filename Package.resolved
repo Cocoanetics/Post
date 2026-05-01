@@ -1,5 +1,5 @@
 {
-  "originHash" : "e06ddf2db911cdb8cb96fc6d0f617b839efea5ce4a875e355e488f956cc2b593",
+  "originHash" : "ab927afcf7a68f6583dd15ab80d8a7d69425163a613064c8ea80be432e37bb57",
   "pins" : [
     {
       "identity" : "swift-argument-parser",
@@ -85,10 +85,10 @@
     {
       "identity" : "swift-nio-imap",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-nio-imap",
+      "location" : "https://github.com/odrobnik/swift-nio-imap",
       "state" : {
-        "revision" : "0a471f59b2632d04a5f4274e3b94db0d2fc7c839",
-        "version" : "0.2.0"
+        "revision" : "01de1f9a29df31f77e87c2d9248940de7233ee1e",
+        "version" : "0.3.0-pre"
       }
     },
     {
@@ -132,8 +132,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftMail",
       "state" : {
-        "revision" : "3166933507e3039ec05ddb17267ee731fa0d3760",
-        "version" : "1.5.2"
+        "revision" : "90ce57aaab3ec8c904b4d6ceee106f699fef43d4",
+        "version" : "1.6.3"
       }
     },
     {
