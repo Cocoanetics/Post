@@ -14,6 +14,7 @@ public enum PostServerError: Error, LocalizedError, Sendable {
     case messageNotFound(uid: Int, mailbox: String)
     case noAttachments(uid: Int)
     case attachmentNotFound(filename: String, uid: Int)
+    case attachmentContentIdNotFound(contentId: String, uid: Int)
     case attachmentDataMissing(filename: String)
     case noIdleEnabledServers
     case emptyBody(uid: Int)
@@ -47,6 +48,8 @@ public enum PostServerError: Error, LocalizedError, Sendable {
             return "Message UID \(uid) has no attachments."
         case .attachmentNotFound(let filename, let uid):
             return "Attachment '\(filename)' not found in message UID \(uid)."
+        case .attachmentContentIdNotFound(let contentId, let uid):
+            return "Attachment with Content-ID '\(contentId)' not found in message UID \(uid)."
         case .attachmentDataMissing(let filename):
             return "Could not decode attachment data for '\(filename)'."
         case .noIdleEnabledServers:
@@ -719,10 +722,11 @@ public actor PostServer {
     /// - Parameter serverId: The server identifier
     /// - Parameter uid: The message UID
     /// - Parameter filename: Attachment filename to download (optional, downloads first if omitted)
+    /// - Parameter cid: Content-ID of an inline attachment to download
     /// - Parameter mailbox: Mailbox name (default: "INBOX")
     /// - Returns: Base64-encoded attachment data with metadata
     @MCPTool
-    public func downloadAttachment(serverId: String, uid: Int, filename: String? = nil, mailbox: String = "INBOX") async throws -> AttachmentData {
+    public func downloadAttachment(serverId: String, uid: Int, filename: String? = nil, cid: String? = nil, mailbox: String = "INBOX") async throws -> AttachmentData {
         guard (1...Int(UInt32.max)).contains(uid) else {
             throw PostServerError.invalidUID(uid)
         }
@@ -732,6 +736,27 @@ public actor PostServer {
             let set = MessageIdentifierSet<UID>(UID(UInt32(uid)))
 
             for try await message in server.fetchMessages(using: set) {
+                if let cid {
+                    let normalizedCID = Self.normalizedContentID(cid)
+                    guard let match = message.cids.first(where: { part in
+                        guard let contentId = part.contentId else { return false }
+                        return Self.normalizedContentID(contentId) == normalizedCID
+                    }) else {
+                        throw PostServerError.attachmentContentIdNotFound(contentId: cid, uid: uid)
+                    }
+
+                    guard let data = match.decodedData() ?? match.data else {
+                        throw PostServerError.attachmentDataMissing(filename: match.suggestedFilename)
+                    }
+
+                    return AttachmentData(
+                        filename: match.filename ?? match.suggestedFilename,
+                        contentType: match.contentType,
+                        data: data.base64EncodedString(),
+                        size: data.count
+                    )
+                }
+
                 let attachments = message.attachments
 
                 guard !attachments.isEmpty else {
@@ -764,6 +789,20 @@ public actor PostServer {
 
             throw PostServerError.messageNotFound(uid: uid, mailbox: mailbox)
         }
+    }
+
+    internal nonisolated static func normalizedContentID(_ contentID: String) -> String {
+        var value = contentID.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if value.lowercased().hasPrefix("cid:") {
+            value = String(value.dropFirst(4)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        if value.hasPrefix("<"), value.hasSuffix(">"), value.count >= 2 {
+            value = String(value.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return (value.removingPercentEncoding ?? value).lowercased()
     }
 
     /// Downloads the raw RFC 822 source of a single message as binary data.
