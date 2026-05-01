@@ -16,6 +16,7 @@ struct OSLogHandler: Logging.LogHandler {
     private let osLog: OSLog
 
     var metadata: Logging.Logger.Metadata = [:]
+    var metadataProvider: Logging.Logger.MetadataProvider?
     var logLevel: Logging.Logger.Level = .trace
 
     init(label: String) {
@@ -47,16 +48,8 @@ struct OSLogHandler: Logging.LogHandler {
         set { metadata[key] = newValue }
     }
 
-    func log(
-        level: Logging.Logger.Level,
-        message: Logging.Logger.Message,
-        metadata: Logging.Logger.Metadata?,
-        source: String,
-        file: String,
-        function: String,
-        line: UInt
-    ) {
-        let osLogType: OSLogType = switch level {
+    func log(event: Logging.LogEvent) {
+        let osLogType: OSLogType = switch event.level {
         case .trace, .debug: .debug
         case .info, .notice: .info
         case .warning: .default
@@ -64,7 +57,7 @@ struct OSLogHandler: Logging.LogHandler {
         case .critical: .fault
         }
 
-        os_log("%{public}@", log: osLog, type: osLogType, message.description)
+        os_log("%{public}@", log: osLog, type: osLogType, event.message.description)
     }
 }
 

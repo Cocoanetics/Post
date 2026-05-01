@@ -10,6 +10,7 @@ struct OSLogHandler: LogHandler {
 
     var logLevel: Logging.Logger.Level = .debug
     var metadata = Logging.Logger.Metadata()
+    var metadataProvider: Logging.Logger.MetadataProvider?
 
     subscript(metadataKey metadataKey: String) -> Logging.Logger.Metadata.Value? {
         get { metadata[metadataKey] }
@@ -21,17 +22,9 @@ struct OSLogHandler: LogHandler {
         self.log = log
     }
 
-    func log(
-        level: Logging.Logger.Level,
-        message: Logging.Logger.Message,
-        metadata: Logging.Logger.Metadata?,
-        source: String,
-        file: String,
-        function: String,
-        line: UInt
-    ) {
+    func log(event: Logging.LogEvent) {
         let type: OSLogType
-        switch level {
+        switch event.level {
         case .trace, .debug:
             type = .debug
         case .info, .notice:
@@ -44,7 +37,7 @@ struct OSLogHandler: LogHandler {
             type = .fault
         }
 
-        os_log("%{public}@", log: log, type: type, message.description)
+        os_log("%{public}@", log: log, type: type, event.message.description)
     }
 }
 #endif
