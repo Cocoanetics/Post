@@ -129,7 +129,7 @@ extension PostDaemon {
                     let httpTransport = HTTPSSETransport(server: server, port: httpPort)
                     try await httpTransport.start()
                     transports.append(httpTransport)
-                    daemonLogger.info("MCP HTTP+SSE transport listening on http://\(String.localHostname):\(httpTransport.port)/sse")
+                    daemonLogger.info("MCP HTTP+SSE transport listening on http://\(ProcessInfo.processInfo.hostName):\(httpTransport.port)/sse")
                 }
 
                 try await tcpTransport.start()
