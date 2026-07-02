@@ -31,7 +31,7 @@ jobs:
 
   build-linux:
     runs-on: ubuntu-latest
-    container: swift:6.1
+    container: swift:6.2
 
     steps:
       - uses: actions/checkout@v4
