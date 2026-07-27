@@ -32,7 +32,7 @@ extension PostProxy {
             }
         }
 
-        let tcpConfig = MCPServerTcpConfig(serviceName: PostProxy.serverName)
+        let tcpConfig = MCPServerTcpConfig(instanceName: PostProxy.serverName)
         let proxy = MCPServerProxy(config: .tcp(config: tcpConfig))
         if let token = ProcessInfo.processInfo.resolvedPostAPIToken() {
             await proxy.setAccessTokenMeta(token)
