@@ -121,7 +121,7 @@ extension PostDaemon {
                 )
             }
 
-            let tcpTransport = TCPBonjourTransport(server: server, serviceName: PostServer.Client.serverName)
+            let tcpTransport = TCPBonjourTransport(server: server, instanceName: PostServer.Client.serverName)
             transports.append(tcpTransport)
 
             do {

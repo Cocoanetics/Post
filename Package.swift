@@ -21,7 +21,10 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.9.0")),
+        // 1.10.0 reworked Bonjour discovery: serviceName: -> instanceName:, and
+        // DiscoveryScope replaces acceptLocalOnly. Source-breaking despite the
+        // minor bump, so the floor is 1.10.0 rather than 1.9.0.
+        .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.10.0")),
         // Pinned to the 1.8.0 tag by revision: SwiftMail ≥ 1.7.0 depends on a
         // revision-pinned swift-nio-imap (no upstream release yet), and SwiftPM
         // refuses stable-version packages with unstable dependencies. Switch back
