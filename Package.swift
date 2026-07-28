@@ -31,12 +31,14 @@ let package = Package(
         // back on a version requirement — no revision pin, and no root
         // swift-nio-imap declaration needed to satisfy SwiftPM.
         .package(url: "https://github.com/Cocoanetics/SwiftMail", .upToNextMajor(from: "1.9.0")),
-        // Only the HTML trait: Post uses just SwiftTextHTML/SwiftTextCore, and
-        // dropping the default CLI/DOCX/EPUB/PAGES traits prunes the
-        // revision-pinned ZIPFoundation from the graph — the dependency that
-        // previously forced this package to be revision-pinned too (SwiftPM
-        // refuses stable-version packages with unstable dependencies).
-        .package(url: "https://github.com/Cocoanetics/SwiftText", .upToNextMajor(from: "2.1.0"), traits: ["HTML"]),
+        // Pinned to the 2.1.0 tag by revision: SwiftText still depends on a
+        // revision-pinned ZIPFoundation, and SwiftPM refuses stable-version
+        // packages with unstable dependencies. Swift 6.3 would accept a version
+        // requirement with traits: ["HTML"] (trait pruning drops ZIPFoundation
+        // before the check), but CI's Swift 6.2 checks before pruning. Switch
+        // back to .upToNextMajor once SwiftText depends only on tagged releases
+        // or CI moves to Swift 6.3.
+        .package(url: "https://github.com/Cocoanetics/SwiftText", revision: "8093c0d3b22754bdbde895230f0f72dbfde6c69d"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0"),
         // Not used directly: SwiftPM fails to resolve this trait-gated transitive

@@ -1,5 +1,5 @@
 {
-  "originHash" : "cfaf6eee0893f2604ef467f290ac8441b567957dec1c55d8d85c90a72884fde3",
+  "originHash" : "fbe72b988be379fdac581786146e340b41797577d898c71df297e1c334e107ed",
   "pins" : [
     {
       "identity" : "jsonfoundation",
@@ -267,8 +267,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftText",
       "state" : {
-        "revision" : "8093c0d3b22754bdbde895230f0f72dbfde6c69d",
-        "version" : "2.1.0"
+        "revision" : "8093c0d3b22754bdbde895230f0f72dbfde6c69d"
       }
     },
     {
@@ -278,6 +277,14 @@
       "state" : {
         "revision" : "92f0051ab9f2d570647b8b76f688b53bdfc1bf06",
         "version" : "1.0.1"
+      }
+    },
+    {
+      "identity" : "zipfoundation",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/weichsel/ZIPFoundation.git",
+      "state" : {
+        "revision" : "187ee77287ea4b23df4d7de32771ec38bbafb840"
       }
     }
   ],
