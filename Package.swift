@@ -21,19 +21,24 @@ let package = Package(
         )
     ],
     dependencies: [
-        // 1.10.0 reworked Bonjour discovery: serviceName: -> instanceName:, and
-        // DiscoveryScope replaces acceptLocalOnly. Source-breaking despite the
-        // minor bump, so the floor is 1.10.0 rather than 1.9.0.
-        .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.10.0")),
+        // 1.10.1 fixes the TCP transport leaking one file descriptor per inbound
+        // connection (which wedged postd once its descriptor table filled, #30)
+        // and makes run() throw on unrecoverable listener failure instead of
+        // parking forever. The floor excludes 1.10.0 so no resolution can pick
+        // the leaking release again.
+        .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.10.1")),
         // 1.9.0 depends on a tagged swift-nio-imap (0.3.0) again, so SwiftMail is
         // back on a version requirement — no revision pin, and no root
         // swift-nio-imap declaration needed to satisfy SwiftPM.
         .package(url: "https://github.com/Cocoanetics/SwiftMail", .upToNextMajor(from: "1.9.0")),
-        // Pinned to the 2.0.0 tag by revision: SwiftText 2.0.0 depends on a
+        // Pinned to the 2.1.0 tag by revision: SwiftText still depends on a
         // revision-pinned ZIPFoundation, and SwiftPM refuses stable-version
-        // packages with unstable dependencies. Switch back to .upToNextMajor
-        // once SwiftText depends only on tagged releases.
-        .package(url: "https://github.com/Cocoanetics/SwiftText", revision: "ec4dc821e00e80e4ddf81bfdaf42b72cc7d7235f"),
+        // packages with unstable dependencies. Swift 6.3 would accept a version
+        // requirement with traits: ["HTML"] (trait pruning drops ZIPFoundation
+        // before the check), but CI's Swift 6.2 checks before pruning. Switch
+        // back to .upToNextMajor once SwiftText depends only on tagged releases
+        // or CI moves to Swift 6.3.
+        .package(url: "https://github.com/Cocoanetics/SwiftText", revision: "8093c0d3b22754bdbde895230f0f72dbfde6c69d"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0"),
         // Not used directly: SwiftPM fails to resolve this trait-gated transitive

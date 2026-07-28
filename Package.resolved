@@ -1,13 +1,13 @@
 {
-  "originHash" : "071636494d9ee5d63e088be5e12fdf05314f01421e4d7b70d047123d3d1cb1e3",
+  "originHash" : "fbe72b988be379fdac581786146e340b41797577d898c71df297e1c334e107ed",
   "pins" : [
     {
       "identity" : "jsonfoundation",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/JSONFoundation.git",
       "state" : {
-        "revision" : "3ff56dbc893ec8addd33a46674c745873812c6cb",
-        "version" : "2.4.0"
+        "revision" : "4a147fbd0d655a8935e526f0865464e57580810f",
+        "version" : "2.5.0"
       }
     },
     {
@@ -60,8 +60,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-certificates.git",
       "state" : {
-        "revision" : "eaa10d47d19919979dd8df22ff4fd6349b1108d4",
-        "version" : "1.19.2"
+        "revision" : "449dbbecd0f31e82b510ada227ca152caa8b5e98",
+        "version" : "1.19.4"
       }
     },
     {
@@ -87,8 +87,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-crypto.git",
       "state" : {
-        "revision" : "1b6b2e274e85105bfa155183145a1dcfd63331f1",
-        "version" : "4.5.0"
+        "revision" : "47d3869a7291f085c1fb9fb1e6d3b97a793f45c6",
+        "version" : "4.5.1"
       }
     },
     {
@@ -150,8 +150,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio-extras.git",
       "state" : {
-        "revision" : "d2eeec0339074034f11a040a74aa2a341a2c4506",
-        "version" : "1.34.1"
+        "revision" : "88a51340f59cf181ebde888bd1b749296b3ec029",
+        "version" : "1.34.3"
       }
     },
     {
@@ -159,8 +159,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio-http2.git",
       "state" : {
-        "revision" : "61d1b44f6e4e118792be1cff88ee2bc0267c6f9a",
-        "version" : "1.44.0"
+        "revision" : "45bdf670248be5f16ec0340e125dca285536f0fb",
+        "version" : "1.45.0"
       }
     },
     {
@@ -168,8 +168,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio-imap",
       "state" : {
-        "revision" : "880366a41739a1a86d23b7857f533491b8a3cd07",
-        "version" : "0.3.0"
+        "revision" : "d67f1243f731457cb9f2eb0beb27eff9e533bf7b",
+        "version" : "0.4.0"
       }
     },
     {
@@ -229,10 +229,10 @@
     {
       "identity" : "swift-system",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-system.git",
+      "location" : "https://github.com/apple/swift-system",
       "state" : {
-        "revision" : "7502b711c92a17741fa625d722b0ccbd595d8ed1",
-        "version" : "1.7.2"
+        "revision" : "50688cacbd41d547e9eb9f7a213542340b7c442b",
+        "version" : "1.7.5"
       }
     },
     {
@@ -258,8 +258,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftMCP",
       "state" : {
-        "revision" : "79a527a4747190e5dc698ced1d96cfc51acda91f",
-        "version" : "1.10.0"
+        "revision" : "22ccdbf77d47d00377f9c8180c1a932589dc4bb3",
+        "version" : "1.10.1"
       }
     },
     {
@@ -267,8 +267,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftText",
       "state" : {
-        "branch" : "ec4dc821e00e80e4ddf81bfdaf42b72cc7d7235f",
-        "revision" : "f8e664269318e0fd2156a965a9e7dc3c4837a204"
+        "revision" : "8093c0d3b22754bdbde895230f0f72dbfde6c69d"
       }
     },
     {
