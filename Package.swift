@@ -25,11 +25,10 @@ let package = Package(
         // DiscoveryScope replaces acceptLocalOnly. Source-breaking despite the
         // minor bump, so the floor is 1.10.0 rather than 1.9.0.
         .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.10.0")),
-        // Pinned to the 1.8.0 tag by revision: SwiftMail ≥ 1.7.0 depends on a
-        // revision-pinned swift-nio-imap (no upstream release yet), and SwiftPM
-        // refuses stable-version packages with unstable dependencies. Switch back
-        // to .upToNextMajor once SwiftMail depends on a tagged swift-nio-imap.
-        .package(url: "https://github.com/Cocoanetics/SwiftMail", revision: "dbb1d0bb6bc7742249cf4800513c5562d54fa734"),
+        // 1.9.0 depends on a tagged swift-nio-imap (0.3.0) again, so SwiftMail is
+        // back on a version requirement — no revision pin, and no root
+        // swift-nio-imap declaration needed to satisfy SwiftPM.
+        .package(url: "https://github.com/Cocoanetics/SwiftMail", .upToNextMajor(from: "1.9.0")),
         // Pinned to the 2.0.0 tag by revision: SwiftText 2.0.0 depends on a
         // revision-pinned ZIPFoundation, and SwiftPM refuses stable-version
         // packages with unstable dependencies. Switch back to .upToNextMajor
@@ -39,11 +38,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0"),
         // Not used directly: SwiftPM fails to resolve this trait-gated transitive
         // dependency (via SwiftMCP → JSONFoundation) unless it is declared at the root.
-        .package(url: "https://github.com/swiftlang/swift-subprocess.git", from: "0.5.0"),
-        // Not used directly: SwiftMail ≥ 1.7.0 pins swift-nio-imap to a revision
-        // (no upstream release yet), which SwiftPM only accepts when the root
-        // declares the same unstable dependency. Keep in sync with SwiftMail.
-        .package(url: "https://github.com/apple/swift-nio-imap", revision: "bcf875610ca56dfd7bae869fa19ca3149c075908")
+        .package(url: "https://github.com/swiftlang/swift-subprocess.git", from: "0.5.0")
     ],
     targets: [
         .plugin(
