@@ -27,10 +27,15 @@ let package = Package(
         // parking forever. The floor excludes 1.10.0 so no resolution can pick
         // the leaking release again.
         .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.10.1")),
-        // 1.9.0 depends on a tagged swift-nio-imap (0.3.0) again, so SwiftMail is
-        // back on a version requirement — no revision pin, and no root
-        // swift-nio-imap declaration needed to satisfy SwiftPM.
-        .package(url: "https://github.com/Cocoanetics/SwiftMail", .upToNextMajor(from: "1.9.0")),
+        // 1.9.2 makes IDLE teardown stick: before 1.9.1, disconnect() only
+        // closed the dedicated IDLE connection's socket and the self-healing
+        // cycle task re-dialed the server, leaking the session's private
+        // EventLoopGroup (the IMAP-side share of #30); 1.9.2 also closes the
+        // post-cancellation reconnect window in that teardown. watchIdleEvents
+        // ends its producers with `try? await idleSession.done()` from
+        // already-cancelled tasks, which these releases pin as a tested
+        // contract. Floor excludes the leaking 1.9.0 and the racy 1.9.1.
+        .package(url: "https://github.com/Cocoanetics/SwiftMail", .upToNextMajor(from: "1.9.2")),
         // Pinned to the 2.1.0 tag by revision: SwiftText still depends on a
         // revision-pinned ZIPFoundation, and SwiftPM refuses stable-version
         // packages with unstable dependencies. Swift 6.3 would accept a version
