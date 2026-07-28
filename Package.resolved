@@ -1,5 +1,5 @@
 {
-  "originHash" : "4fb01572df897f29c8ddfe6760f401436693855e47afb606d024cdc8e25f65bd",
+  "originHash" : "071636494d9ee5d63e088be5e12fdf05314f01421e4d7b70d047123d3d1cb1e3",
   "pins" : [
     {
       "identity" : "jsonfoundation",
@@ -141,8 +141,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio",
       "state" : {
-        "revision" : "cd3e1152083706d77b223fb29110e590efcc70c0",
-        "version" : "2.101.2"
+        "revision" : "0b18836bd8b0162e7e17a995a3fbee20ed8f3b2b",
+        "version" : "2.101.3"
       }
     },
     {
@@ -168,7 +168,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio-imap",
       "state" : {
-        "revision" : "bcf875610ca56dfd7bae869fa19ca3149c075908"
+        "revision" : "880366a41739a1a86d23b7857f533491b8a3cd07",
+        "version" : "0.3.0"
       }
     },
     {
@@ -176,7 +177,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio-ssl",
       "state" : {
-        "revision" : "407d82d5b6cc00e1c3fb83a81b1539b70c788c5e"
+        "revision" : "d930168b86f46ca51a4bc09c5ca45c1833db8067",
+        "version" : "2.37.2"
       }
     },
     {
@@ -247,7 +249,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftMail",
       "state" : {
-        "revision" : "dbb1d0bb6bc7742249cf4800513c5562d54fa734"
+        "revision" : "7ba22114bf681acc105fe728d0130c79a6a51cf0",
+        "version" : "1.9.0"
       }
     },
     {
