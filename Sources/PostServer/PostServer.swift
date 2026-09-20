@@ -906,23 +906,7 @@ public actor PostServer {
         let ccRecipients = cc?.split(separator: ",").map { EmailAddress(address: $0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? []
         let bccRecipients = bcc?.split(separator: ",").map { EmailAddress(address: $0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? []
 
-        let textBody: String
-        let htmlBody: String?
-
-        switch format {
-        case .html:
-            htmlBody = body
-            let converter = HTMLToMarkdown(data: Data(body.utf8))
-            textBody = try await converter.markdown()
-        case .markdown:
-            htmlBody = MarkdownToHTML.document(body, stylesheet: Self.emailStylesheet)
-            textBody = body
-        case .text:
-            textBody = body
-            let plainHTML = Self.plainTextToHTML(body)
-            htmlBody = Self.wrapHTMLDocument(plainHTML)
-        }
-
+        var resolvedBody = body
         var emailAttachments: [Attachment]?
         if let attachments, !attachments.isEmpty {
             let resolvedPaths = try attachments
@@ -940,13 +924,37 @@ public actor PostServer {
                     return [expanded]
                 }
 
-            emailAttachments = try resolvedPaths.map { path in
+            let urls = try resolvedPaths.map { path in
                 let url = URL(fileURLWithPath: path)
                 guard FileManager.default.fileExists(atPath: url.path) else {
                     throw PostServerError.fileNotFound(url.path)
                 }
-                return try Attachment(fileURL: url)
+                return url
             }
+            let prepared = try Self.prepareAttachments(
+                from: urls,
+                resolvingReferencesIn: body,
+                format: format
+            )
+            resolvedBody = prepared.body
+            emailAttachments = prepared.attachments
+        }
+
+        let textBody: String
+        let htmlBody: String?
+
+        switch format {
+        case .html:
+            htmlBody = resolvedBody
+            let converter = HTMLToMarkdown(data: Data(resolvedBody.utf8))
+            textBody = try await converter.markdown()
+        case .markdown:
+            htmlBody = MarkdownToHTML.document(resolvedBody, stylesheet: Self.emailStylesheet)
+            textBody = resolvedBody
+        case .text:
+            textBody = resolvedBody
+            let plainHTML = Self.plainTextToHTML(resolvedBody)
+            htmlBody = Self.wrapHTMLDocument(plainHTML)
         }
 
         var additionalHeaders: [String: String]?
@@ -992,6 +1000,34 @@ public actor PostServer {
             let uid = result.firstUID.map { Int($0.value) }
             return DraftResult(mailbox: targetMailbox, uid: uid)
         }
+    }
+
+    /// Marks files referenced by `attachment:<filename>` in Markdown as inline
+    /// and rewrites those references to the generated Content-ID.
+    static func prepareAttachments(
+        from urls: [URL],
+        resolvingReferencesIn body: String,
+        format: BodyFormat
+    ) throws -> (body: String, attachments: [Attachment]) {
+        var resolvedBody = body
+        let attachments = try urls.map { url in
+            let reference = "attachment:\(url.lastPathComponent)"
+            guard format == .markdown, resolvedBody.contains(reference) else {
+                return try Attachment(fileURL: url)
+            }
+
+            let contentID = UUID().uuidString
+            resolvedBody = resolvedBody.replacingOccurrences(
+                of: reference,
+                with: "cid:\(contentID)"
+            )
+            return try Attachment(
+                fileURL: url,
+                contentID: contentID,
+                isInline: true
+            )
+        }
+        return (resolvedBody, attachments)
     }
     
     /// Sends a draft email via SMTP.
