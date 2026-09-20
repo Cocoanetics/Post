@@ -28,7 +28,11 @@ extension PostCLI {
         @Option(name: .long, help: "Comma-separated BCC addresses")
         var bcc: String?
 
-        @Option(name: .long, parsing: .upToNextOption, help: "File paths or glob patterns to attach (repeatable)")
+        @Option(
+            name: .long,
+            parsing: .upToNextOption,
+            help: "File paths or glob patterns to attach (repeatable). In Markdown, use attachment:<filename> as a link or image target to place a file inline."
+        )
         var attach: [String] = []
 
         @Option(name: .long, help: "Server identifier")

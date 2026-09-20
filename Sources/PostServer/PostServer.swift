@@ -906,23 +906,7 @@ public actor PostServer {
         let ccRecipients = cc?.split(separator: ",").map { EmailAddress(address: $0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? []
         let bccRecipients = bcc?.split(separator: ",").map { EmailAddress(address: $0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? []
 
-        let textBody: String
-        let htmlBody: String?
-
-        switch format {
-        case .html:
-            htmlBody = body
-            let converter = HTMLToMarkdown(data: Data(body.utf8))
-            textBody = try await converter.markdown()
-        case .markdown:
-            htmlBody = MarkdownToHTML.document(body, stylesheet: Self.emailStylesheet)
-            textBody = body
-        case .text:
-            textBody = body
-            let plainHTML = Self.plainTextToHTML(body)
-            htmlBody = Self.wrapHTMLDocument(plainHTML)
-        }
-
+        var resolvedBody = body
         var emailAttachments: [Attachment]?
         if let attachments, !attachments.isEmpty {
             let resolvedPaths = try attachments
@@ -940,13 +924,37 @@ public actor PostServer {
                     return [expanded]
                 }
 
-            emailAttachments = try resolvedPaths.map { path in
+            let urls = try resolvedPaths.map { path in
                 let url = URL(fileURLWithPath: path)
                 guard FileManager.default.fileExists(atPath: url.path) else {
                     throw PostServerError.fileNotFound(url.path)
                 }
-                return try Attachment(fileURL: url)
+                return url
             }
+            let prepared = try Self.prepareAttachments(
+                from: urls,
+                resolvingReferencesIn: body,
+                format: format
+            )
+            resolvedBody = prepared.body
+            emailAttachments = prepared.attachments
+        }
+
+        let textBody: String
+        let htmlBody: String?
+
+        switch format {
+        case .html:
+            htmlBody = resolvedBody
+            let converter = HTMLToMarkdown(data: Data(resolvedBody.utf8))
+            textBody = try await converter.markdown()
+        case .markdown:
+            htmlBody = MarkdownToHTML.document(resolvedBody, stylesheet: Self.emailStylesheet)
+            textBody = resolvedBody
+        case .text:
+            textBody = resolvedBody
+            let plainHTML = Self.plainTextToHTML(resolvedBody)
+            htmlBody = Self.wrapHTMLDocument(plainHTML)
         }
 
         var additionalHeaders: [String: String]?
@@ -992,6 +1000,132 @@ public actor PostServer {
             let uid = result.firstUID.map { Int($0.value) }
             return DraftResult(mailbox: targetMailbox, uid: uid)
         }
+    }
+
+    /// Marks files referenced by `attachment:<filename>` in Markdown as inline
+    /// and rewrites those references to the generated Content-ID.
+    static func prepareAttachments(
+        from urls: [URL],
+        resolvingReferencesIn body: String,
+        format: BodyFormat
+    ) throws -> (body: String, attachments: [Attachment]) {
+        let references = format == .markdown
+            ? markdownAttachmentReferences(in: body)
+            : []
+        let referencedTargets = Set(references.map(\.target))
+        var replacementByTarget: [String: String] = [:]
+        var contentIDByAttachmentIndex: [Int: String] = [:]
+
+        for (index, url) in urls.enumerated() {
+            let target = "attachment:\(url.lastPathComponent)"
+            guard referencedTargets.contains(target), replacementByTarget[target] == nil else {
+                continue
+            }
+            let contentID = UUID().uuidString
+            replacementByTarget[target] = "cid:\(contentID)"
+            contentIDByAttachmentIndex[index] = contentID
+        }
+
+        var resolvedBody = body
+        for reference in references.reversed() {
+            guard let replacement = replacementByTarget[reference.target],
+                  let range = Range(reference.range, in: resolvedBody)
+            else {
+                continue
+            }
+            resolvedBody.replaceSubrange(range, with: replacement)
+        }
+
+        let attachments = try urls.enumerated().map { index, url in
+            if let contentID = contentIDByAttachmentIndex[index] {
+                return try Attachment(
+                    fileURL: url,
+                    contentID: contentID,
+                    isInline: true
+                )
+            }
+            return try Attachment(fileURL: url)
+        }
+        return (resolvedBody, attachments)
+    }
+
+    private static func markdownAttachmentReferences(
+        in body: String
+    ) -> [(range: NSRange, target: String)] {
+        let pattern = #"!?\[(?:\\.|[^\]\\])*\]\([ \t]*(?:<(attachment:[^<>\s()]+)>|(attachment:[^<>\s()]+))(?:[ \t]+(?:\"(?:\\.|[^\"])*\"|'(?:\\.|[^'])*'|\((?:\\.|[^)])*\)))?[ \t]*\)"#
+        let expression = try! NSRegularExpression(pattern: pattern)
+        let bodyRange = NSRange(body.startIndex..<body.endIndex, in: body)
+        let codeRanges = markdownCodeRanges(in: body)
+
+        return expression.matches(in: body, range: bodyRange).compactMap { match in
+            let targetNSRange = match.range(at: 1).location != NSNotFound
+                ? match.range(at: 1)
+                : match.range(at: 2)
+            guard !codeRanges.contains(where: { NSIntersectionRange($0, match.range).length > 0 }),
+                  let targetRange = Range(targetNSRange, in: body)
+            else {
+                return nil
+            }
+            return (targetNSRange, String(body[targetRange]))
+        }
+    }
+
+    private static func markdownCodeRanges(in body: String) -> [NSRange] {
+        let nsBody = body as NSString
+        let inlineCode = try! NSRegularExpression(
+            pattern: #"(?<!`)(`+)(?!`).*?\1(?!`)"#
+        )
+        var ranges: [NSRange] = []
+        var activeFence: (marker: Character, count: Int)?
+        var location = 0
+
+        while location < nsBody.length {
+            let lineRange = nsBody.lineRange(for: NSRange(location: location, length: 0))
+            let line = nsBody.substring(with: lineRange)
+            let fence = markdownFence(in: line)
+
+            if let currentFence = activeFence {
+                ranges.append(lineRange)
+                if let fence,
+                   fence.marker == currentFence.marker,
+                   fence.count >= currentFence.count,
+                   fence.remainder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    activeFence = nil
+                }
+            } else if let fence {
+                activeFence = (fence.marker, fence.count)
+                ranges.append(lineRange)
+            } else if line.hasPrefix("    ") || line.hasPrefix("\t") {
+                ranges.append(lineRange)
+            } else {
+                ranges.append(contentsOf: inlineCode.matches(in: body, range: lineRange).map(\.range))
+            }
+
+            location = NSMaxRange(lineRange)
+        }
+        return ranges
+    }
+
+    private static func markdownFence(
+        in line: String
+    ) -> (marker: Character, count: Int, remainder: Substring)? {
+        var remainder = line[...]
+        var indentation = 0
+        while remainder.first == " ", indentation < 4 {
+            indentation += 1
+            remainder.removeFirst()
+        }
+        guard indentation <= 3,
+              let marker = remainder.first,
+              marker == "`" || marker == "~"
+        else {
+            return nil
+        }
+
+        let count = remainder.prefix(while: { $0 == marker }).count
+        guard count >= 3 else { return nil }
+        remainder.removeFirst(count)
+        return (marker, count, remainder)
     }
     
     /// Sends a draft email via SMTP.

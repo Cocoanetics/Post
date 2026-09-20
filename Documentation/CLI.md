@@ -199,6 +199,50 @@ post credential list
 post credential delete --server work
 ```
 
+### Drafting & Sending
+
+#### `post draft` — Create a draft
+
+The body can be inline text or a file path. Markdown files are converted to an
+HTML alternative automatically.
+
+```bash
+post draft --server work \
+  --from sender@example.com \
+  --to recipient@example.com \
+  --subject "Invoice" \
+  --body letter.md \
+  --attach code.png invoice.pdf
+```
+
+Files passed with `--attach` are ordinary downloadable attachments by default.
+To place one inline at a specific point in a Markdown body, use its filename as
+an `attachment:` image target:
+
+```markdown
+Please scan the payment code below.
+
+![Payment code](attachment:code.png)
+
+Kind regards
+```
+
+At draft creation time, Post replaces that target with a generated Content-ID
+and marks the matching file as inline. The match uses the file's basename, so
+`attachment:code.png` matches `--attach ./images/code.png`. Files not referenced
+this way, including `invoice.pdf` above, remain ordinary attachments. Inline
+files can be downloaded later with `post attachment --cid`; ordinary attachments
+use `--filename`.
+
+#### `post send` — Send a draft
+
+`post send` sends the MIME content already stored in the draft, including its
+inline and ordinary attachments; it does not reposition or reprocess them.
+
+```bash
+post send 1234 --server work --yes
+```
+
 ## Global Options
 
 | Option | Description |
