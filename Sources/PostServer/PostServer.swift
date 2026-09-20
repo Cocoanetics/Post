@@ -1009,25 +1009,123 @@ public actor PostServer {
         resolvingReferencesIn body: String,
         format: BodyFormat
     ) throws -> (body: String, attachments: [Attachment]) {
-        var resolvedBody = body
-        let attachments = try urls.map { url in
-            let reference = "attachment:\(url.lastPathComponent)"
-            guard format == .markdown, resolvedBody.contains(reference) else {
-                return try Attachment(fileURL: url)
-            }
+        let references = format == .markdown
+            ? markdownAttachmentReferences(in: body)
+            : []
+        let referencedTargets = Set(references.map(\.target))
+        var replacementByTarget: [String: String] = [:]
+        var contentIDByAttachmentIndex: [Int: String] = [:]
 
+        for (index, url) in urls.enumerated() {
+            let target = "attachment:\(url.lastPathComponent)"
+            guard referencedTargets.contains(target), replacementByTarget[target] == nil else {
+                continue
+            }
             let contentID = UUID().uuidString
-            resolvedBody = resolvedBody.replacingOccurrences(
-                of: reference,
-                with: "cid:\(contentID)"
-            )
-            return try Attachment(
-                fileURL: url,
-                contentID: contentID,
-                isInline: true
-            )
+            replacementByTarget[target] = "cid:\(contentID)"
+            contentIDByAttachmentIndex[index] = contentID
+        }
+
+        var resolvedBody = body
+        for reference in references.reversed() {
+            guard let replacement = replacementByTarget[reference.target],
+                  let range = Range(reference.range, in: resolvedBody)
+            else {
+                continue
+            }
+            resolvedBody.replaceSubrange(range, with: replacement)
+        }
+
+        let attachments = try urls.enumerated().map { index, url in
+            if let contentID = contentIDByAttachmentIndex[index] {
+                return try Attachment(
+                    fileURL: url,
+                    contentID: contentID,
+                    isInline: true
+                )
+            }
+            return try Attachment(fileURL: url)
         }
         return (resolvedBody, attachments)
+    }
+
+    private static func markdownAttachmentReferences(
+        in body: String
+    ) -> [(range: NSRange, target: String)] {
+        let pattern = #"!?\[(?:\\.|[^\]\\])*\]\([ \t]*(?:<(attachment:[^<>\s()]+)>|(attachment:[^<>\s()]+))(?:[ \t]+(?:\"(?:\\.|[^\"])*\"|'(?:\\.|[^'])*'|\((?:\\.|[^)])*\)))?[ \t]*\)"#
+        let expression = try! NSRegularExpression(pattern: pattern)
+        let bodyRange = NSRange(body.startIndex..<body.endIndex, in: body)
+        let codeRanges = markdownCodeRanges(in: body)
+
+        return expression.matches(in: body, range: bodyRange).compactMap { match in
+            let targetNSRange = match.range(at: 1).location != NSNotFound
+                ? match.range(at: 1)
+                : match.range(at: 2)
+            guard !codeRanges.contains(where: { NSIntersectionRange($0, match.range).length > 0 }),
+                  let targetRange = Range(targetNSRange, in: body)
+            else {
+                return nil
+            }
+            return (targetNSRange, String(body[targetRange]))
+        }
+    }
+
+    private static func markdownCodeRanges(in body: String) -> [NSRange] {
+        let nsBody = body as NSString
+        let inlineCode = try! NSRegularExpression(
+            pattern: #"(?<!`)(`+)(?!`).*?\1(?!`)"#
+        )
+        var ranges: [NSRange] = []
+        var activeFence: (marker: Character, count: Int)?
+        var location = 0
+
+        while location < nsBody.length {
+            let lineRange = nsBody.lineRange(for: NSRange(location: location, length: 0))
+            let line = nsBody.substring(with: lineRange)
+            let fence = markdownFence(in: line)
+
+            if let currentFence = activeFence {
+                ranges.append(lineRange)
+                if let fence,
+                   fence.marker == currentFence.marker,
+                   fence.count >= currentFence.count,
+                   fence.remainder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    activeFence = nil
+                }
+            } else if let fence {
+                activeFence = (fence.marker, fence.count)
+                ranges.append(lineRange)
+            } else if line.hasPrefix("    ") || line.hasPrefix("\t") {
+                ranges.append(lineRange)
+            } else {
+                ranges.append(contentsOf: inlineCode.matches(in: body, range: lineRange).map(\.range))
+            }
+
+            location = NSMaxRange(lineRange)
+        }
+        return ranges
+    }
+
+    private static func markdownFence(
+        in line: String
+    ) -> (marker: Character, count: Int, remainder: Substring)? {
+        var remainder = line[...]
+        var indentation = 0
+        while remainder.first == " ", indentation < 4 {
+            indentation += 1
+            remainder.removeFirst()
+        }
+        guard indentation <= 3,
+              let marker = remainder.first,
+              marker == "`" || marker == "~"
+        else {
+            return nil
+        }
+
+        let count = remainder.prefix(while: { $0 == marker }).count
+        guard count >= 3 else { return nil }
+        remainder.removeFirst(count)
+        return (marker, count, remainder)
     }
     
     /// Sends a draft email via SMTP.
