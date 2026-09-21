@@ -35,7 +35,14 @@ let package = Package(
         // ends its producers with `try? await idleSession.done()` from
         // already-cancelled tasks, which these releases pin as a tested
         // contract. Floor excludes the leaking 1.9.0 and the racy 1.9.1.
-        .package(url: "https://github.com/Cocoanetics/SwiftMail", .upToNextMajor(from: "1.9.2")),
+        // The floor has since moved past 1.9.2 for MSGParser (1.12.0): Outlook
+        // `.msg` is an OLE2/MAPI container, not RFC 822, so `post msg` needs a
+        // parser EMLParser cannot stand in for. 1.12.0 also stops
+        // Message.bodies/.attachments/.cids reaching inside an attached
+        // message/rfc822, which `post msg --json` relies on so a forwarded
+        // mail's body and attachments are not reported as the outer message's
+        // own — the normal shape of a saved Outlook message.
+        .package(url: "https://github.com/Cocoanetics/SwiftMail", .upToNextMajor(from: "1.12.0")),
         // Pinned to the 2.1.0 tag by revision: SwiftText still depends on a
         // revision-pinned ZIPFoundation, and SwiftPM refuses stable-version
         // packages with unstable dependencies. Swift 6.3 would accept a version
