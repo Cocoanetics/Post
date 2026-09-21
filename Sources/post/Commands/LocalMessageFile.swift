@@ -134,7 +134,7 @@ enum LocalMessageFile {
         @Option(name: .long, help: "Section of a single part to write out, as `--list-parts` prints it (e.g. 4.2)")
         var part: String?
 
-        @Option(name: .long, help: "Output path for --part — directory or filename (default: current directory)")
+        @Option(name: .long, help: "Output path for --part — an existing directory, or one ending in /, takes a file named after the part; anything else is the filename to write (default: .)")
         var output: String = "."
 
         func validate() throws {
@@ -226,15 +226,31 @@ enum LocalMessageFile {
             throw ValidationError("Part \(section) (\(part.contentType)) carries no bytes of its own.\(hint)")
         }
 
-        let outURL = URL(fileURLWithPath: output)
-        let isExplicitFile = !outURL.pathExtension.isEmpty
-        let directory = isExplicitFile ? outURL.deletingLastPathComponent() : outURL
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-
-        let destination = isExplicitFile ? outURL : directory.appendingPathComponent(part.suggestedFilename)
+        let destination = try destination(for: output, named: part.suggestedFilename)
         try data.write(to: destination)
         print("Saved \(destination.lastPathComponent) (\(part.contentType), \(data.count.formattedAsBytes())) "
               + "to \(destination.path)")
+    }
+
+    /// Where `--part` writes, for a path that may name a directory or a file.
+    ///
+    /// The extension is not a usable signal in either direction: `exports.v1`
+    /// is a plausible directory name and `README` a plausible filename, and
+    /// keying on `pathExtension` got both wrong — writing into the first
+    /// failed outright, and the second silently became a directory holding a
+    /// generated child. The rule instead is:
+    ///
+    /// - an existing directory is a directory;
+    /// - a trailing slash means a directory, created if missing;
+    /// - anything else is the file to write, with its parent created.
+    static func destination(for output: String, named filename: String) throws -> URL {
+        let url = URL(fileURLWithPath: output)
+        let isExistingDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+        let wantsDirectory = isExistingDirectory || output.hasSuffix("/")
+
+        let directory = wantsDirectory ? url : url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return wantsDirectory ? directory.appendingPathComponent(filename) : url
     }
 
     // MARK: - Conversion
