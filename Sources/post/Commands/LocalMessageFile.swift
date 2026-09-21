@@ -103,7 +103,11 @@ enum LocalMessageFile {
             )
         }
 
-        Output(
+        // A one-element array, not a bare object: `post eml --json` has always
+        // emitted one, and consumers that index or iterate the result would
+        // break on every invocation. `post msg` matches it so the two commands
+        // stay interchangeable.
+        [Output(
             from: detail.from,
             to: detail.to,
             cc: detail.cc,
@@ -113,7 +117,7 @@ enum LocalMessageFile {
             attachments: detail.attachments,
             embeddedMessages: embedded.isEmpty ? nil : embedded,
             unicodeAbuse: UnicodeAbuseSummary.combine([subject.unicodeAbuse, formattedBody.unicodeAbuse])
-        ).printAsJSON()
+        )].printAsJSON()
     }
 
     // MARK: - Conversion
