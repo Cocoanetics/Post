@@ -24,6 +24,7 @@ struct PostCLI: AsyncParsableCommand {
         List.self,
         Fetch.self,
         EML.self,
+        MSG.self,
         Folders.self,
         Create.self,
         Status.self,
