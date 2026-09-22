@@ -13,21 +13,21 @@ extension PostCLI {
     struct MSG: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "msg",
-            abstract: "Parse a local Outlook .msg file and output body"
+            abstract: "Parse a local Outlook .msg file and output body or parts"
         )
 
         @Argument(help: "Path to the .msg file")
         var file: String
 
-        @Option(name: .long, help: "Body format: text, html, or markdown (default: markdown)")
-        var body: LocalMessageFile.BodyFormat = .markdown
+        @OptionGroup
+        var options: LocalMessageFile.Options
 
         @OptionGroup
         var globals: GlobalOptions
 
         func run() async throws {
             let message = try LocalMessageFile.read(file, as: .msg)
-            try await LocalMessageFile.emit(message, body: body, json: globals.json)
+            try await LocalMessageFile.run(message, options: options, json: globals.json)
         }
     }
 }

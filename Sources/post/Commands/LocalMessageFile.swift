@@ -120,6 +120,139 @@ enum LocalMessageFile {
         )].printAsJSON()
     }
 
+    /// What the command was asked to do with the file.
+    ///
+    /// Shared by `eml` and `msg` so the two cannot drift; each command is only
+    /// the format it names.
+    struct Options: ParsableArguments {
+        @Option(name: .long, help: "Body format: text, html, or markdown (default: markdown)")
+        var body: BodyFormat = .markdown
+
+        @ArgumentParser.Flag(name: .long, help: "List the parts with the section that addresses each one")
+        var listParts: Bool = false
+
+        @Option(name: .long, help: "Section of a single part to write out, as `--list-parts` prints it (e.g. 4.2)")
+        var part: String?
+
+        @Option(name: .long, help: "Output path for --part — an existing directory, or one ending in /, takes a file named after the part; anything else is the filename to write (default: .)")
+        var output: String = "."
+
+        func validate() throws {
+            if listParts && part != nil {
+                throw ValidationError("Use either --list-parts or --part, not both.")
+            }
+        }
+    }
+
+    /// Run whichever of the three modes the options select.
+    static func run(_ message: Message, options: Options, json: Bool) async throws {
+        if options.listParts {
+            printListing(message, json: json)
+        } else if let section = options.part {
+            try extract(message, section: section, to: options.output)
+        } else {
+            try await emit(message, body: options.body, json: json)
+        }
+    }
+
+    // MARK: - Parts
+
+    /// One row of the part listing.
+    struct PartListing: Codable {
+        let section: String
+        let contentType: String
+        let filename: String?
+        let disposition: String?
+        let contentId: String?
+        let size: Int?
+        /// The subject of the message this part carries, for `message/rfc822`.
+        let embeddedSubject: String?
+    }
+
+    static func listings(for message: Message) -> [PartListing] {
+        message.parts.map { part in
+            PartListing(
+                section: part.section.description,
+                contentType: part.contentType,
+                filename: part.filename,
+                disposition: part.disposition,
+                contentId: part.contentId,
+                size: part.decodedData()?.count,
+                embeddedSubject: part.embeddedMessageInfo?.subject
+            )
+        }
+    }
+
+    /// Print every part with the section that addresses it.
+    static func printListing(_ message: Message, json: Bool) {
+        let rows = listings(for: message)
+        guard !json else {
+            rows.printAsJSON()
+            return
+        }
+
+        guard !rows.isEmpty else {
+            print("No parts.")
+            return
+        }
+        let width = rows.map(\.section.count).max() ?? 7
+        for row in rows {
+            let size = row.size.map { $0.formattedAsBytes() } ?? "—"
+            let name = row.filename ?? row.embeddedSubject.map { "(\($0))" } ?? ""
+            let disposition = row.disposition.map { " [\($0)]" } ?? ""
+            print("\(row.section.padded(to: width))  "
+                  + "\(row.contentType.padded(to: 34))  \(size.padded(to: 9))  \(name)\(disposition)")
+        }
+    }
+
+    /// Write one part's decoded bytes to `output`.
+    ///
+    /// The section is the dotted number the listing prints, so `4.2` is the
+    /// HTML body of the message attached at `4`. Transfer encoding is undone
+    /// on the way out, so a base64 `.eml` attachment lands as its real bytes.
+    static func extract(_ message: Message, section: String, to output: String) throws {
+        guard let part = message.parts.first(where: { $0.section.description == section }) else {
+            let available = message.parts.map(\.section.description).joined(separator: ", ")
+            throw ValidationError("No part \(section). Available: \(available)")
+        }
+
+        guard let data = part.decodedData() else {
+            // An embedded message is a container, not bytes; its content is
+            // addressable one level down.
+            let children = message.parts
+                .map(\.section.description)
+                .filter { $0.hasPrefix(section + ".") }
+            let hint = children.isEmpty ? "" : " Its content is at: \(children.joined(separator: ", "))."
+            throw ValidationError("Part \(section) (\(part.contentType)) carries no bytes of its own.\(hint)")
+        }
+
+        let destination = try destination(for: output, named: part.suggestedFilename)
+        try data.write(to: destination)
+        print("Saved \(destination.lastPathComponent) (\(part.contentType), \(data.count.formattedAsBytes())) "
+              + "to \(destination.path)")
+    }
+
+    /// Where `--part` writes, for a path that may name a directory or a file.
+    ///
+    /// The extension is not a usable signal in either direction: `exports.v1`
+    /// is a plausible directory name and `README` a plausible filename, and
+    /// keying on `pathExtension` got both wrong — writing into the first
+    /// failed outright, and the second silently became a directory holding a
+    /// generated child. The rule instead is:
+    ///
+    /// - an existing directory is a directory;
+    /// - a trailing slash means a directory, created if missing;
+    /// - anything else is the file to write, with its parent created.
+    static func destination(for output: String, named filename: String) throws -> URL {
+        let url = URL(fileURLWithPath: output)
+        let isExistingDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+        let wantsDirectory = isExistingDirectory || output.hasSuffix("/")
+
+        let directory = wantsDirectory ? url : url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return wantsDirectory ? directory.appendingPathComponent(filename) : url
+    }
+
     // MARK: - Conversion
 
     static func detail(for message: Message) -> MessageDetail {
