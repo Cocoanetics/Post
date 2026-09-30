@@ -829,7 +829,6 @@ public actor PostServer {
     /// - Returns: Base64-encoded PDF data
     @MCPTool
     public func exportPDF(serverId: String, uid: Int, mailbox: String = "INBOX") async throws -> AttachmentData {
-        #if os(macOS)
         guard (1...Int(UInt32.max)).contains(uid) else {
             throw PostServerError.invalidUID(uid)
         }
@@ -852,7 +851,7 @@ public actor PostServer {
                 let subject = message.subject ?? "message-\(uid)"
                 let filename = Self.sanitizeFilename(subject) + ".pdf"
 
-                let pdfData = try await HTMLToPDF.render(html: html)
+                let pdfData = try await HTMLToPDF.render(html: html, logger: logger)
                 return AttachmentData(
                     filename: filename,
                     contentType: "application/pdf",
@@ -863,9 +862,6 @@ public actor PostServer {
 
             throw PostServerError.messageNotFound(uid: uid, mailbox: mailbox)
         }
-        #else
-        throw PostServerError.unsupportedPlatform("PDF export requires macOS")
-        #endif
     }
 
     /// Body format for composing emails.

@@ -12,9 +12,9 @@ final class IdleEventLogger: MCPServerProxyLogNotificationHandling, @unchecked S
     func mcpServerProxy(_ proxy: MCPServerProxy, didReceiveLog message: LogMessage) async {
         let timestamp = dateFormatter.string(from: Date())
 
-        if let structured = parseStructuredEvent(from: message.data.value) {
+        if let structured = parseStructuredEvent(from: message.data.jsonObject) {
             "[\(timestamp)] \(structured.server)/\(structured.mailbox): \(structured.event)".writeToStandardOutputLine()
-        } else if let text = message.data.value as? String {
+        } else if let text = message.data.jsonObject as? String {
             "[\(timestamp)] \(text)".writeToStandardOutputLine()
         } else {
             "[\(timestamp)] \(message.data)".writeToStandardOutputLine()

@@ -1,21 +1,18 @@
-#if os(macOS)
 import Foundation
-import SwiftTextHTML
+import Logging
+import SwiftTextRender
 
-/// Renders HTML content to PDF using WebKit.
+/// Renders HTML content to PDF with SwiftText's Swift layout engine.
+///
+/// No WebKit, so this runs on every platform Post builds for. Glyphs the
+/// base-14 fonts lack fall back to installed system fonts.
 enum HTMLToPDF {
 
-    /// Converts an HTML string to PDF data.
-    /// Must be called from an async context; internally dispatches to `@MainActor`.
-    @available(macOS 12.0, *)
-    static func render(html: String) async throws -> Data {
-        await MainActor.run {
-            // WebKit needs a RunLoop tick — ensure one is scheduled
-            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+    /// Converts an HTML string to PDF data, logging renderer warnings (such as
+    /// images that could not be drawn) instead of writing them to stderr.
+    static func render(html: String, logger: Logger) async throws -> Data {
+        try await HTMLRenderer.renderPDF(html: html) { warning in
+            logger.warning("PDF export: \(warning)")
         }
-
-        let browser = await WebKitBrowser(htmlString: html)
-        return try await browser.exportPDFData()
     }
 }
-#endif
