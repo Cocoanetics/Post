@@ -1,4 +1,4 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.3
 import PackageDescription
 
 let package = Package(
@@ -26,7 +26,10 @@ let package = Package(
         // and makes run() throw on unrecoverable listener failure instead of
         // parking forever. The floor excludes 1.10.0 so no resolution can pick
         // the leaking release again.
-        .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.10.1")),
+        // 1.13.0 requires JSONFoundation 3.1, whose JSONValue.jsonObject
+        // IdleEventLogger uses; 1.10.1 still allowed JSONFoundation 2.4,
+        // which predates it.
+        .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.13.0")),
         // 1.9.2 makes IDLE teardown stick: before 1.9.1, disconnect() only
         // closed the dedicated IDLE connection's socket and the self-healing
         // cycle task re-dialed the server, leaking the session's private
@@ -42,15 +45,21 @@ let package = Package(
         // message/rfc822, which `post msg --json` relies on so a forwarded
         // mail's body and attachments are not reported as the outer message's
         // own — the normal shape of a saved Outlook message.
-        .package(url: "https://github.com/Cocoanetics/SwiftMail", .upToNextMajor(from: "1.12.0")),
-        // Pinned to the 2.1.0 tag by revision: SwiftText still depends on a
-        // revision-pinned ZIPFoundation, and SwiftPM refuses stable-version
-        // packages with unstable dependencies. Swift 6.3 would accept a version
-        // requirement with traits: ["HTML"] (trait pruning drops ZIPFoundation
-        // before the check), but CI's Swift 6.2 checks before pruning. Switch
-        // back to .upToNextMajor once SwiftText depends only on tagged releases
-        // or CI moves to Swift 6.3.
-        .package(url: "https://github.com/Cocoanetics/SwiftText", revision: "8093c0d3b22754bdbde895230f0f72dbfde6c69d"),
+        // 1.13.0 reads every address through one RFC 5322 parser and formats
+        // them one way for every source (IMAP ENVELOPE, EML, .msg): names are
+        // quoted only where needed and `from` lists every From mailbox. The
+        // floor keeps Post's address output identical across resolutions.
+        .package(url: "https://github.com/Cocoanetics/SwiftMail", .upToNextMajor(from: "1.13.0")),
+        // 2.2.0 replaced the revision-pinned ZIPFoundation with tagged
+        // swift-archive, so SwiftText is a normal version requirement again.
+        // It declares swift-tools-version 6.3, which sets Post's toolchain
+        // floor. 2.3.0 subsets CFF fonts when embedding them, which `post pdf`
+        // needs: before it, one line of CJK text embedded the whole 23 MB
+        // Hiragino collection. Default traits on purpose: traits: ["HTML"]
+        // would prune swift-archive, but SwiftPM then fails a fresh
+        // `swift package update` with "exhausted attempts to resolve …
+        // swift-archive".
+        .package(url: "https://github.com/Cocoanetics/SwiftText", .upToNextMajor(from: "2.3.0")),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0"),
         // Not used directly: SwiftPM fails to resolve this trait-gated transitive
@@ -69,6 +78,7 @@ let package = Package(
                 .product(name: "SwiftMail", package: "SwiftMail"),
                 .product(name: "SwiftTextHTML", package: "SwiftText"),
                 .product(name: "SwiftTextCore", package: "SwiftText"),
+                .product(name: "SwiftTextRender", package: "SwiftText"),
                 .product(name: "Logging", package: "swift-log")
             ],
             plugins: [
