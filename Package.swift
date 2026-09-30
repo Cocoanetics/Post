@@ -26,7 +26,10 @@ let package = Package(
         // and makes run() throw on unrecoverable listener failure instead of
         // parking forever. The floor excludes 1.10.0 so no resolution can pick
         // the leaking release again.
-        .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.10.1")),
+        // 1.13.0 requires JSONFoundation 3.1, whose JSONValue.jsonObject
+        // IdleEventLogger uses; 1.10.1 still allowed JSONFoundation 2.4,
+        // which predates it.
+        .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.13.0")),
         // 1.9.2 makes IDLE teardown stick: before 1.9.1, disconnect() only
         // closed the dedicated IDLE connection's socket and the self-healing
         // cycle task re-dialed the server, leaking the session's private
