@@ -19,11 +19,14 @@ public actor IMAPConnectionManager {
             .sorted()
             .map { id in
                 let config = configuration.server(withID: id)
+                // Credentials may live in the keychain rather than inline config, so resolve
+                // them the same way connections do instead of reading config.credentials directly.
+                let resolved = try? configuration.resolveCredentials(forServer: id)
                 return ServerInfo(
                     id: id,
-                    host: config?.credentials?.host,
-                    port: config?.credentials?.port,
-                    username: config?.credentials?.username,
+                    host: resolved?.host,
+                    port: resolved?.port,
+                    username: resolved?.username,
                     command: config?.command
                 )
             }
