@@ -4,6 +4,12 @@ import PostServer
 
 extension PostCLI {
     struct Draft: AsyncParsableCommand {
+        struct ReplyAddresses: Equatable {
+            let from: String
+            let to: String
+            let cc: String?
+        }
+
         static let configuration = CommandConfiguration(abstract: "Create a new email draft")
 
         @Option(name: .long, help: "Sender email address (auto-derived from original when using --replying-to)")
@@ -81,6 +87,10 @@ extension PostCLI {
                         throw ValidationError("Message UID \(replyUID) not found in mailbox '\(sourceMailbox)'")
                     }
 
+                    let accountAddress = try await client.listServers()
+                        .first { $0.id == serverId }?
+                        .username
+
                     // Threading headers
                     inReplyTo = original.messageId
 
@@ -94,35 +104,21 @@ extension PostCLI {
                         references = msgId
                     }
 
-                    // Auto-derive from, to, subject if not explicitly provided
-                    if from == nil {
-                        derivedFrom = original.to.first
-                        guard derivedFrom != nil else {
-                            throw ValidationError("Cannot auto-derive sender from original message (no recipient found)")
-                        }
-                    }
-
-                    if to == nil {
-                        derivedTo = original.from
-                    }
+                    // Auto-derive addressing according to whether this account sent or received the original
+                    let replyAddresses = try Self.replyAddresses(
+                        for: original,
+                        accountAddress: accountAddress,
+                        from: from,
+                        to: to,
+                        cc: cc,
+                        replyAll: replyAll
+                    )
+                    derivedFrom = replyAddresses.from
+                    derivedTo = replyAddresses.to
+                    derivedCC = replyAddresses.cc
 
                     if subject == nil {
                         derivedSubject = original.subject.hasPrefix("Re: ") ? original.subject : "Re: \(original.subject)"
-                    }
-
-                    // Handle reply-all: include all original recipients in CC (except sender and primary recipient)
-                    if replyAll && cc == nil {
-                        let allRecipients = original.to + (original.cc ?? [])
-                        let excludeSender = derivedFrom ?? from ?? ""
-                        let excludePrimary = derivedTo ?? to ?? ""
-
-                        let ccAddresses = allRecipients.filter { recipient in
-                            recipient != excludeSender && recipient != excludePrimary
-                        }
-
-                        if !ccAddresses.isEmpty {
-                            derivedCC = ccAddresses.joined(separator: ", ")
-                        }
                     }
 
                     // Auto-quote original when body is omitted (like Mail.app Reply behavior)
@@ -184,6 +180,70 @@ extension PostCLI {
                     print("Draft created in '\(result.mailbox)'.")
                 }
             }
+        }
+
+        static func replyAddresses(
+            for original: MessageDetail,
+            accountAddress: String?,
+            from explicitFrom: String?,
+            to explicitTo: String?,
+            cc explicitCC: String?,
+            replyAll: Bool
+        ) throws -> ReplyAddresses {
+            let wasSentByAccount = accountAddress.map {
+                mailboxAddress(in: $0).caseInsensitiveCompare(mailboxAddress(in: original.from)) == .orderedSame
+            } ?? false
+
+            let replyFrom: String
+            if let explicitFrom {
+                replyFrom = explicitFrom
+            } else if wasSentByAccount {
+                replyFrom = original.from
+            } else if let originalRecipient = original.to.first {
+                replyFrom = originalRecipient
+            } else {
+                throw ValidationError("Cannot auto-derive sender from original message (no recipient found)")
+            }
+
+            let replyTo: String
+            if let explicitTo {
+                replyTo = explicitTo
+            } else if wasSentByAccount {
+                guard !original.to.isEmpty else {
+                    throw ValidationError("Cannot auto-derive recipient from original message (no recipient found)")
+                }
+                replyTo = original.to.joined(separator: ", ")
+            } else {
+                replyTo = original.from
+            }
+
+            var replyCC = explicitCC
+            if replyAll && replyCC == nil {
+                let candidates = wasSentByAccount ? (original.cc ?? []) : original.to + (original.cc ?? [])
+                let excludedAddresses = [replyFrom, replyTo].map(mailboxAddress(in:))
+                let ccAddresses = candidates.filter { candidate in
+                    !excludedAddresses.contains {
+                        $0.caseInsensitiveCompare(mailboxAddress(in: candidate)) == .orderedSame
+                    }
+                }
+
+                if !ccAddresses.isEmpty {
+                    replyCC = ccAddresses.joined(separator: ", ")
+                }
+            }
+
+            return ReplyAddresses(from: replyFrom, to: replyTo, cc: replyCC)
+        }
+
+        private static func mailboxAddress(in value: String) -> String {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let openingBracket = trimmed.lastIndex(of: "<"),
+                  let closingBracket = trimmed[openingBracket...].firstIndex(of: ">") else {
+                return trimmed
+            }
+
+            return String(trimmed[trimmed.index(after: openingBracket)..<closingBracket])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         private func formatQuotedReply(original: MessageDetail) async throws -> String {
