@@ -409,9 +409,24 @@ enum PIDFileManager {
     }
     #else
     private static func executablePath(forPID pid: Int32) -> String? {
-        try? FileManager.default.destinationOfSymbolicLink(atPath: "/proc/\(pid)/exe")
+        guard let target = try? FileManager.default.destinationOfSymbolicLink(atPath: "/proc/\(pid)/exe") else {
+            return nil
+        }
+
+        return strippingDeletedSuffix(from: target)
     }
     #endif
+
+    /// If the on-disk binary was removed or replaced since exec (e.g. during an upgrade),
+    /// Linux's `/proc/<pid>/exe` readlink appends " (deleted)" to the real path. Strip it so
+    /// identity checks still match the genuine, still-running executable.
+    static func strippingDeletedSuffix(from path: String) -> String {
+        let deletedSuffix = " (deleted)"
+        guard path.hasSuffix(deletedSuffix) else {
+            return path
+        }
+        return String(path.dropLast(deletedSuffix.count))
+    }
 }
 
 func bootstrapDaemonLogging(level: Logger.Level) {

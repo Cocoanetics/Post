@@ -95,4 +95,18 @@ final class PIDFileManagerIdentityTests: XCTestCase {
 
         return binaryURL
     }
+
+    func testStrippingDeletedSuffixRemovesKernelAnnotation() {
+        XCTAssertEqual(
+            PIDFileManager.strippingDeletedSuffix(from: "/usr/local/bin/postd (deleted)"),
+            "/usr/local/bin/postd"
+        )
+    }
+
+    func testStrippingDeletedSuffixLeavesOrdinaryPathUnchanged() {
+        XCTAssertEqual(
+            PIDFileManager.strippingDeletedSuffix(from: "/usr/local/bin/postd"),
+            "/usr/local/bin/postd"
+        )
+    }
 }
