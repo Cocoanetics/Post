@@ -46,3 +46,53 @@ final class PostDaemonExecutablePathTests: XCTestCase {
         return executableURL
     }
 }
+
+final class PIDFileManagerIdentityTests: XCTestCase {
+    func testIsPostdProcessReturnsFalseForNonExistentPID() {
+        // A PID vanishingly unlikely to be in use.
+        XCTAssertFalse(PIDFileManager.isPostdProcess(Int32.max - 1))
+    }
+
+    func testIsPostdProcessReturnsFalseForRunningProcessThatIsNotPostd() {
+        // The test runner's own PID exists, but its executable isn't named "postd" —
+        // this is the stale-PID-after-reboot scenario from the bug report.
+        XCTAssertFalse(PIDFileManager.isPostdProcess(getpid()))
+    }
+
+    func testIsPostdProcessReturnsTrueForProcessNamedPostd() throws {
+        let scriptURL = try makeScript(named: "postd")
+
+        let process = Process()
+        process.executableURL = scriptURL
+        process.arguments = ["30"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+
+        addTeardownBlock {
+            process.terminate()
+            process.waitUntilExit()
+        }
+
+        XCTAssertTrue(PIDFileManager.isPostdProcess(process.processIdentifier))
+    }
+
+    /// Copies the `sleep` binary to a file named `name` so the running process's
+    /// own executable path (as `proc_pidpath` reports it) ends in `name` — a `#!/bin/sh`
+    /// script wouldn't do, since the kernel execs the interpreter, not the script.
+    private func makeScript(named name: String) throws -> URL {
+        let fileManager = FileManager.default
+        let directoryURL = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let binaryURL = directoryURL.appendingPathComponent(name)
+
+        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        try fileManager.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: binaryURL)
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binaryURL.path)
+
+        addTeardownBlock {
+            try? fileManager.removeItem(at: directoryURL)
+        }
+
+        return binaryURL
+    }
+}
