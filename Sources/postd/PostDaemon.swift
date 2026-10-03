@@ -181,8 +181,8 @@ extension PostDaemon {
                 return
             }
 
-            guard PIDFileManager.isProcessRunning(pid) else {
-                logger.warning("Stale PID file found for PID \(pid). Removing it.")
+            guard PIDFileManager.isPostdProcess(pid) else {
+                logger.warning("Stale PID file found for PID \(pid) (not a postd process). Removing it.")
                 try PIDFileManager.removePIDFile()
                 return
             }
@@ -221,8 +221,8 @@ extension PostDaemon {
                 throw ExitCode.failure
             }
 
-            guard PIDFileManager.isProcessRunning(pid) else {
-                logger.warning("Stale PID file found for PID \(pid).")
+            guard PIDFileManager.isPostdProcess(pid) else {
+                logger.warning("Stale PID file found for PID \(pid) (not a postd process).")
                 try PIDFileManager.removePIDFile()
                 throw ExitCode.failure
             }
@@ -247,7 +247,7 @@ extension PostDaemon {
                 return
             }
 
-            if PIDFileManager.isProcessRunning(pid) {
+            if PIDFileManager.isPostdProcess(pid) {
                 logger.info("postd is running (PID \(pid)).")
             } else {
                 logger.warning("postd is not running (stale PID file for PID \(pid)).")
@@ -324,7 +324,7 @@ enum ExecutablePathResolver {
     }
 }
 
-private enum PIDFileManager {
+enum PIDFileManager {
     static var pidURL: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".post.pid")
     }
@@ -334,7 +334,7 @@ private enum PIDFileManager {
             return
         }
 
-        if isProcessRunning(pid) {
+        if isPostdProcess(pid) {
             throw ValidationError("postd is already running (PID \(pid)).")
         }
 
@@ -377,6 +377,55 @@ private enum PIDFileManager {
         }
 
         return errno == EPERM
+    }
+
+    /// Confirms `pid` both exists and is actually running the `postd` executable.
+    ///
+    /// PIDs are reused across reboots, so a PID file left over from a previous run can end up
+    /// pointing at an unrelated process. `kill(pid, 0)` alone can't tell the two apart, so this
+    /// also resolves the target's executable path and checks its name before the PID is trusted
+    /// or signalled.
+    static func isPostdProcess(_ pid: Int32) -> Bool {
+        guard pid > 0, kill(pid, 0) == 0 else {
+            return false
+        }
+
+        guard let path = executablePath(forPID: pid) else {
+            return false
+        }
+
+        return URL(fileURLWithPath: path).lastPathComponent == "postd"
+    }
+
+    #if canImport(Darwin)
+    private static func executablePath(forPID pid: Int32) -> String? {
+        // PROC_PIDPATHINFO_MAXSIZE (4 * MAXPATHLEN); the macro itself isn't importable.
+        var buffer = [CChar](repeating: 0, count: 4 * 1024)
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else {
+            return nil
+        }
+        return String(decoding: buffer[0..<Int(length)].map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+    #else
+    private static func executablePath(forPID pid: Int32) -> String? {
+        guard let target = try? FileManager.default.destinationOfSymbolicLink(atPath: "/proc/\(pid)/exe") else {
+            return nil
+        }
+
+        return strippingDeletedSuffix(from: target)
+    }
+    #endif
+
+    /// If the on-disk binary was removed or replaced since exec (e.g. during an upgrade),
+    /// Linux's `/proc/<pid>/exe` readlink appends " (deleted)" to the real path. Strip it so
+    /// identity checks still match the genuine, still-running executable.
+    static func strippingDeletedSuffix(from path: String) -> String {
+        let deletedSuffix = " (deleted)"
+        guard path.hasSuffix(deletedSuffix) else {
+            return path
+        }
+        return String(path.dropLast(deletedSuffix.count))
     }
 }
 
