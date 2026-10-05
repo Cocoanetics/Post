@@ -11,6 +11,7 @@ public enum PostServerError: Error, LocalizedError, Sendable {
     case invalidDate(String, String)
     case invalidFlagOperation(String)
     case invalidFlags(String)
+    case invalidAddress(String)
     case messageNotFound(uid: Int, mailbox: String)
     case noAttachments(uid: Int)
     case attachmentNotFound(filename: String, uid: Int)
@@ -42,6 +43,8 @@ public enum PostServerError: Error, LocalizedError, Sendable {
             return "Invalid flag operation '\(operation)'. Use 'add' or 'remove'."
         case .invalidFlags(let flags):
             return "Invalid flag list '\(flags)'. Use comma-separated names like seen,flagged,custom."
+        case .invalidAddress(let value):
+            return "Could not parse email address from '\(value)'. Use 'addr@example.com' or 'Name <addr@example.com>'."
         case .messageNotFound(let uid, let mailbox):
             return "Message UID \(uid) was not found in mailbox '\(mailbox)'."
         case .noAttachments(let uid):
@@ -873,13 +876,13 @@ public actor PostServer {
 
     /// Creates a new email draft and appends it to the Drafts mailbox.
     /// - Parameter serverId: The server identifier
-    /// - Parameter from: Sender email address
-    /// - Parameter to: Comma-separated recipient email addresses
+    /// - Parameter from: Sender address, as `addr@example.com` or `Name <addr@example.com>`
+    /// - Parameter to: Comma-separated recipient addresses (`Name <addr@example.com>` accepted; a quoted name may contain a comma)
     /// - Parameter subject: Email subject
     /// - Parameter body: The body content
     /// - Parameter format: Body format: text (default), html, or markdown
-    /// - Parameter cc: Optional comma-separated CC addresses
-    /// - Parameter bcc: Optional comma-separated BCC addresses
+    /// - Parameter cc: Optional comma-separated CC addresses (same syntax as `to`)
+    /// - Parameter bcc: Optional comma-separated BCC addresses (same syntax as `to`)
     /// - Parameter attachments: Optional comma-separated file paths to attach
     /// - Parameter mailbox: Optional custom mailbox (defaults to server's Drafts folder)
     @MCPTool
@@ -897,10 +900,10 @@ public actor PostServer {
         inReplyTo: String? = nil,
         references: String? = nil
     ) async throws -> DraftResult {
-        let sender = EmailAddress(address: from)
-        let recipients = to.split(separator: ",").map { EmailAddress(address: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-        let ccRecipients = cc?.split(separator: ",").map { EmailAddress(address: $0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? []
-        let bccRecipients = bcc?.split(separator: ",").map { EmailAddress(address: $0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? []
+        let sender = try Self.parseAddress(from)
+        let recipients = try Self.parseAddressList(to)
+        let ccRecipients = try cc.map(Self.parseAddressList) ?? []
+        let bccRecipients = try bcc.map(Self.parseAddressList) ?? []
 
         var resolvedBody = body
         var emailAttachments: [Attachment]?
@@ -996,6 +999,31 @@ public actor PostServer {
             let uid = result.firstUID.map { Int($0.value) }
             return DraftResult(mailbox: targetMailbox, uid: uid)
         }
+    }
+
+    /// Parses a single RFC 5322 mailbox, such as `Jane Doe <jane@example.com>`.
+    static func parseAddress(_ value: String) throws -> EmailAddress {
+        guard let address = EmailAddress(value) else {
+            throw PostServerError.invalidAddress(value)
+        }
+        return address
+    }
+
+    /// Parses a comma-separated address list such as a `To`/`Cc`/`Bcc` value,
+    /// respecting quoted display names that may themselves contain a comma.
+    static func parseAddressList(_ value: String) throws -> [EmailAddress] {
+        var mailboxes: [EmailAddress] = []
+        for entry in AddressParser.parseAddressList(value) {
+            switch entry {
+            case .mailbox(let address):
+                mailboxes.append(address)
+            case .group(_, let members):
+                mailboxes.append(contentsOf: members)
+            case .invalid(let text):
+                throw PostServerError.invalidAddress(text)
+            }
+        }
+        return mailboxes
     }
 
     /// Marks files referenced by `attachment:<filename>` in Markdown as inline
