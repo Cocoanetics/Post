@@ -12,10 +12,10 @@ extension PostCLI {
 
         static let configuration = CommandConfiguration(abstract: "Create a new email draft")
 
-        @Option(name: .long, help: "Sender email address (auto-derived from original when using --replying-to)")
+        @Option(name: .long, help: "Sender address: 'addr@example.com' or 'Name <addr@example.com>' (auto-derived from original when using --replying-to)")
         var from: String?
 
-        @Option(name: .long, help: "Comma-separated recipient addresses (auto-derived from original when using --replying-to)")
+        @Option(name: .long, help: "Comma-separated recipient addresses; 'Name <addr@example.com>' accepted, quoted names may contain a comma (auto-derived from original when using --replying-to)")
         var to: String?
 
         @Option(name: .long, help: "Email subject (auto-derived from original when using --replying-to)")
@@ -28,10 +28,10 @@ extension PostCLI {
         )
         var body: String?
 
-        @Option(name: .long, help: "Comma-separated CC addresses")
+        @Option(name: .long, help: "Comma-separated CC addresses (same syntax as --to)")
         var cc: String?
 
-        @Option(name: .long, help: "Comma-separated BCC addresses")
+        @Option(name: .long, help: "Comma-separated BCC addresses (same syntax as --to)")
         var bcc: String?
 
         @Option(
