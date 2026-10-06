@@ -49,7 +49,9 @@ let package = Package(
         // them one way for every source (IMAP ENVELOPE, EML, .msg): names are
         // quoted only where needed and `from` lists every From mailbox. The
         // floor keeps Post's address output identical across resolutions.
-        .package(url: "https://github.com/Cocoanetics/SwiftMail", .upToNextMajor(from: "1.13.0")),
+        // 1.14.0 sends the ESEARCH PARTIAL option only to servers that advertise
+        // it, so `post search` works on Gmail and iCloud.
+        .package(url: "https://github.com/Cocoanetics/SwiftMail", .upToNextMajor(from: "1.14.0")),
         // 2.2.0 replaced the revision-pinned ZIPFoundation with tagged
         // swift-archive, so SwiftText is a normal version requirement again.
         // It declares swift-tools-version 6.3, which sets Post's toolchain
