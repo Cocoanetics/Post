@@ -63,7 +63,8 @@ let package = Package(
         // swift-archive".
         .package(url: "https://github.com/Cocoanetics/SwiftText", .upToNextMajor(from: "2.3.0")),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
-        .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0"),
+        // 1.11.0 introduced LogEvent, which both OSLogHandlers implement.
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.11.0"),
         // Not used directly: SwiftPM fails to resolve this trait-gated transitive
         // dependency (via SwiftMCP → JSONFoundation) unless it is declared at the root.
         .package(url: "https://github.com/swiftlang/swift-subprocess.git", from: "0.5.0")
