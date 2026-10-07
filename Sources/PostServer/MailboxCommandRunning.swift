@@ -20,6 +20,12 @@ protocol MailboxCommandRunning: Actor {
         partialRange: PartialRange?
     ) async throws -> SwiftMail.ExtendedSearchResult<T>
 
+    func searchCount<T: SwiftMail.MessageIdentifier>(
+        identifierSet: SwiftMail.MessageIdentifierSet<T>?,
+        criteria: [SwiftMail.SearchCriteria],
+        calendar: Calendar
+    ) async throws -> SwiftMail.ExtendedSearchResult<T>
+
     func fetchMessageInfosBulk<T: SwiftMail.MessageIdentifier>(
         using identifierSet: SwiftMail.MessageIdentifierSet<T>,
         options: SwiftMail.FetchMessageInfoOptions,

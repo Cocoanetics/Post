@@ -24,16 +24,13 @@ final class ConcurrentMailboxAccessLiveTests: XCTestCase {
             .map { $0.trimmingCharacters(in: .whitespaces) }
 
         let server = PostServer(configuration: try PostConfiguration.load())
-        // Counts return every matching UID; limit them to the last year so a large
-        // mailbox's reply stays within SwiftMail's response buffer.
-        let since = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-365 * 24 * 3600))
 
         // One request at a time.
         var baseline = Snapshot()
         for mailbox in mailboxes {
             let uids = try await server.searchMessages(serverId: serverId, mailbox: mailbox, limit: 200).messages.map(\.uid)
             baseline.searchUIDs[mailbox] = uids
-            baseline.counts[mailbox] = try await server.countMessages(serverId: serverId, mailbox: mailbox, since: since).count ?? -1
+            baseline.counts[mailbox] = try await server.countMessages(serverId: serverId, mailbox: mailbox).count ?? -1
             if let uid = uids.min() {
                 baseline.rawMessages[mailbox] = try await server.downloadEml(serverId: serverId, uid: uid, mailbox: mailbox)
             }
@@ -48,7 +45,7 @@ final class ConcurrentMailboxAccessLiveTests: XCTestCase {
                         return Snapshot(searchUIDs: [mailbox: uids])
                     }
                     group.addTask {
-                        let count = try await server.countMessages(serverId: serverId, mailbox: mailbox, since: since).count ?? -1
+                        let count = try await server.countMessages(serverId: serverId, mailbox: mailbox).count ?? -1
                         return Snapshot(counts: [mailbox: count])
                     }
                     if let uid = baseline.searchUIDs[mailbox]?.min() {
