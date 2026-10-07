@@ -328,7 +328,9 @@ public actor PostServer {
             _ = try await server.selectMailbox(mailbox)
             var messages: [MessageDetail] = []
 
-            for info in try await fetchInfos(for: set.toArray(), using: server) {
+            // One FETCH with the set as given: a range like 1-1000000 stays compact, and the
+            // server answers only for the messages that exist.
+            for info in try await server.fetchHeaderInfos(using: set) {
                 guard let uid = info.uid else { continue }
                 // Download the text and HTML bodies only; attachments are listed by name and type.
                 let outline = Message(header: info, parts: try await server.fetchStructure(uid))

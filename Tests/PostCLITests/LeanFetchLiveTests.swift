@@ -33,16 +33,11 @@ final class LeanFetchLiveTests: XCTestCase {
         return messages
     }
 
-    /// JSON with sorted keys and without `dropping`, for comparing values that aren't Equatable.
-    private func json(_ value: some Encodable, dropping keys: Set<String> = []) throws -> String {
-        let encoded = try JSONEncoder().encode(value)
-        var object = try JSONSerialization.jsonObject(with: encoded)
-        if var dictionary = object as? [String: Any] {
-            keys.forEach { dictionary.removeValue(forKey: $0) }
-            object = dictionary
-        }
-        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
-        return String(decoding: data, as: UTF8.self)
+    /// JSON with sorted keys, for comparing values that aren't Equatable.
+    private func json(_ value: some Encodable) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return String(decoding: try encoder.encode(value), as: UTF8.self)
     }
 
     func testListingAndFetchMatchFullDownloads() async throws {
@@ -69,8 +64,7 @@ final class LeanFetchLiveTests: XCTestCase {
             try expectedHeaders.sorted { $0.uid > $1.uid }.map { try json($0) }
         )
 
-        // post fetch: text and HTML bodies only. Additional headers are fetched separately and
-        // not part of the comparison.
+        // post fetch: text and HTML bodies only, additional headers included.
         let uids = full.compactMap(\.uid).map { String($0.value) }.joined(separator: ",")
         let details = try await post.fetchMessage(serverId: serverId, uids: uids, mailbox: mailbox)
         var expectedDetails: [MessageDetail] = []
@@ -78,13 +72,37 @@ final class LeanFetchLiveTests: XCTestCase {
             expectedDetails.append(await post.messageDetail(from: message))
         }
         XCTAssertEqual(details.count, expectedDetails.count)
+        // A message may have nothing left after the noise filter, but the sample must have some.
+        XCTAssertTrue(details.contains { !($0.additionalHeaders ?? [:]).isEmpty }, "additional headers missing")
         XCTAssertEqual(
-            try details.sorted { $0.uid < $1.uid }.map { try json($0, dropping: ["additionalHeaders"]) },
-            try expectedDetails.sorted { $0.uid < $1.uid }.map { try json($0, dropping: ["additionalHeaders"]) }
+            try details.sorted { $0.uid < $1.uid }.map { try json($0) },
+            try expectedDetails.sorted { $0.uid < $1.uid }.map { try json($0) }
         )
 
         await post.shutdown()
         try? await reference.disconnect()
+    }
+
+    /// A wide UID range must go to the server as one compact FETCH, not be expanded into one
+    /// request per 200 UIDs.
+    func testWideRangeFetchesOnlyExistingMessages() async throws {
+        let serverId = try liveServerID()
+        let mailbox = ProcessInfo.processInfo.environment["POST_LIVE_TEST_LEAN_MAILBOX"] ?? "INBOX"
+        let post = PostServer(configuration: try PostConfiguration.load())
+
+        let newest = try await post.listMessages(serverId: serverId, mailbox: mailbox, limit: 3).map(\.uid).sorted()
+        guard let lowest = newest.first, let highest = newest.last else {
+            throw XCTSkip("\(mailbox) is empty")
+        }
+
+        let start = ContinuousClock.now
+        let details = try await post.fetchMessage(serverId: serverId, uids: "\(lowest)-\(highest + 1_000_000)", mailbox: mailbox)
+        let elapsed = ContinuousClock.now - start
+
+        XCTAssertEqual(details.map(\.uid).sorted(), newest)
+        XCTAssertLessThan(elapsed, .seconds(30))
+
+        await post.shutdown()
     }
 
     func testAttachmentMatchesFullDownload() async throws {

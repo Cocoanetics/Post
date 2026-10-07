@@ -50,7 +50,9 @@ extension MailboxCommandRunning {
         )
     }
 
-    /// Envelope, flags and dates only, no message bodies.
+    /// Header data without any message body: SwiftMail's default info set, which is envelope,
+    /// internal date, flags, body structure and the full header section (so
+    /// `MessageInfo.additionalFields` is filled, as `fetchMessages(using:)` filled it).
     func fetchHeaderInfos<T: SwiftMail.MessageIdentifier>(
         using identifierSet: SwiftMail.MessageIdentifierSet<T>
     ) async throws -> [SwiftMail.MessageInfo] {
