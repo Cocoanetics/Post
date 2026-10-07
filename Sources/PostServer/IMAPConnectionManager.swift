@@ -3,10 +3,19 @@ import Logging
 import SwiftMail
 
 public actor IMAPConnectionManager {
+    /// Extra connections per account for searches and raw downloads, on top of the
+    /// primary connection and any IDLE connections. Kept small: servers cap the
+    /// connections per user (Dovecot 10 per IP, Gmail 15).
+    public static let extraConnectionsPerServer = 2
+
     private let configuration: PostConfiguration
     private var connections: [String: IMAPServer] = [:]
     /// In-flight connection tasks so concurrent callers share a single attempt.
     private var pendingConnections: [String: Task<IMAPServer, Error>] = [:]
+    /// One lock per account, held for a whole operation on its primary connection.
+    private var primaryLocks: [String: AsyncSerialLock] = [:]
+    /// Leases for each account's extra connections.
+    private var extraConnectionPools: [String: ConnectionSlotPool] = [:]
     private let logger = Logger(label: "com.cocoanetics.Post.IMAPConnectionManager")
 
     public init(configuration: PostConfiguration) {
@@ -123,6 +132,27 @@ public actor IMAPConnectionManager {
             try? await server.disconnect()
             throw error
         }
+    }
+
+    /// The lock that keeps "select a mailbox, then run commands in it" together on the
+    /// account's shared primary connection.
+    func primaryLock(for serverId: String) -> AsyncSerialLock {
+        if let lock = primaryLocks[serverId] {
+            return lock
+        }
+        let lock = AsyncSerialLock()
+        primaryLocks[serverId] = lock
+        return lock
+    }
+
+    /// The leases for the account's extra connections (`extraConnectionsPerServer` slots).
+    func extraConnectionPool(for serverId: String) -> ConnectionSlotPool {
+        if let pool = extraConnectionPools[serverId] {
+            return pool
+        }
+        let pool = ConnectionSlotPool(size: Self.extraConnectionsPerServer)
+        extraConnectionPools[serverId] = pool
+        return pool
     }
 
     public func reconnect(for serverId: String) async throws -> IMAPServer {
