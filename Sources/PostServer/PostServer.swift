@@ -302,13 +302,14 @@ public actor PostServer {
             throw PostServerError.invalidLimit(limit)
         }
 
-        return try await withServer(serverId: serverId) { server in
-            let status = try await server.selectMailbox(mailbox)
+        return try await withExtraConnection(serverId: serverId) { connection in
+            let status = try await connection.selectMailbox(mailbox)
             guard let latest = status.latest(limit) else {
                 return []
             }
 
-            let headers = try await collectHeaders(from: server.fetchMessages(using: latest))
+            // Header data only; the listing shows nothing from the bodies.
+            let headers = try await fetchHeaders(for: latest.toArray(), using: connection)
             return headers.sorted { $0.uid > $1.uid }
         }
     }
@@ -327,7 +328,13 @@ public actor PostServer {
             _ = try await server.selectMailbox(mailbox)
             var messages: [MessageDetail] = []
 
-            for try await message in server.fetchMessages(using: set) {
+            // One FETCH with the set as given: a range like 1-1000000 stays compact, and the
+            // server answers only for the messages that exist.
+            for info in try await server.fetchHeaderInfos(using: set) {
+                guard let uid = info.uid else { continue }
+                // Download the text and HTML bodies only; attachments are listed by name and type.
+                let outline = Message(header: info, parts: try await server.fetchStructure(uid))
+                let message = try await downloading(outline.bodies, of: outline, uid: uid, using: server)
                 let additionalHeaders = await fetchAdditionalHeaders(for: message, using: server)
 
                 messages.append(messageDetail(from: message, additionalHeaders: additionalHeaders))
@@ -771,37 +778,30 @@ public actor PostServer {
 
         return try await withServer(serverId: serverId) { server in
             _ = try await server.selectMailbox(mailbox)
-            let set = MessageIdentifierSet<UID>(UID(UInt32(uid)))
+            let messageUID = UID(UInt32(uid))
 
-            for try await message in server.fetchMessages(using: set) {
-                if let cid {
-                    let normalizedCID = Self.normalizedContentID(cid)
-                    guard let match = message.cids.first(where: { part in
-                        guard let contentId = part.contentId else { return false }
-                        return Self.normalizedContentID(contentId) == normalizedCID
-                    }) else {
-                        throw PostServerError.attachmentContentIdNotFound(contentId: cid, uid: uid)
-                    }
+            // Choose the part from the message's structure, then download only that part.
+            guard let message = try await fetchOutline(uid: messageUID, using: server) else {
+                throw PostServerError.messageNotFound(uid: uid, mailbox: mailbox)
+            }
 
-                    guard let data = match.decodedData() ?? match.data else {
-                        throw PostServerError.attachmentDataMissing(filename: match.suggestedFilename)
-                    }
-
-                    return AttachmentData(
-                        filename: match.filename ?? match.suggestedFilename,
-                        contentType: match.contentType,
-                        data: data.base64EncodedString(),
-                        size: data.count
-                    )
+            var part: MessagePart
+            if let cid {
+                let normalizedCID = Self.normalizedContentID(cid)
+                guard let match = message.cids.first(where: { part in
+                    guard let contentId = part.contentId else { return false }
+                    return Self.normalizedContentID(contentId) == normalizedCID
+                }) else {
+                    throw PostServerError.attachmentContentIdNotFound(contentId: cid, uid: uid)
                 }
-
+                part = match
+            } else {
                 let attachments = message.attachments
 
                 guard !attachments.isEmpty else {
                     throw PostServerError.noAttachments(uid: uid)
                 }
 
-                let part: MessagePart
                 if let filename {
                     guard let match = attachments.first(where: {
                         ($0.filename ?? $0.suggestedFilename).lowercased() == filename.lowercased()
@@ -812,20 +812,20 @@ public actor PostServer {
                 } else {
                     part = attachments[0]
                 }
-
-                guard let data = part.decodedData() ?? part.data else {
-                    throw PostServerError.attachmentDataMissing(filename: part.suggestedFilename)
-                }
-
-                return AttachmentData(
-                    filename: part.filename ?? part.suggestedFilename,
-                    contentType: part.contentType,
-                    data: data.base64EncodedString(),
-                    size: data.count
-                )
             }
 
-            throw PostServerError.messageNotFound(uid: uid, mailbox: mailbox)
+            part.data = try await server.fetchPart(section: part.section, of: messageUID)
+
+            guard let data = part.decodedData() ?? part.data else {
+                throw PostServerError.attachmentDataMissing(filename: part.suggestedFilename)
+            }
+
+            return AttachmentData(
+                filename: part.filename ?? part.suggestedFilename,
+                contentType: part.contentType,
+                data: data.base64EncodedString(),
+                size: data.count
+            )
         }
     }
 
@@ -873,32 +873,33 @@ public actor PostServer {
 
         return try await withServer(serverId: serverId) { server in
             _ = try await server.selectMailbox(mailbox)
-            let set = MessageIdentifierSet<UID>(UID(UInt32(uid)))
+            let messageUID = UID(UInt32(uid))
 
-            for try await message in server.fetchMessages(using: set) {
-                let html: String
+            guard let outline = try await fetchOutline(uid: messageUID, using: server) else {
+                throw PostServerError.messageNotFound(uid: uid, mailbox: mailbox)
+            }
+            // The PDF is rendered from the text or HTML body; attachments are not downloaded.
+            let message = try await downloading(outline.bodies, of: outline, uid: messageUID, using: server)
 
-                if let htmlBody = message.htmlBody, !htmlBody.isEmpty {
-                    html = htmlBody
-                } else if let textBody = message.textBody, !textBody.isEmpty {
-                    html = MarkdownToHTML.convert(textBody)
-                } else {
-                    throw PostServerError.emptyBody(uid: uid)
-                }
-
-                let subject = message.subject ?? "message-\(uid)"
-                let filename = Self.sanitizeFilename(subject) + ".pdf"
-
-                let pdfData = try await HTMLToPDF.render(html: html, logger: logger)
-                return AttachmentData(
-                    filename: filename,
-                    contentType: "application/pdf",
-                    data: pdfData.base64EncodedString(),
-                    size: pdfData.count
-                )
+            let html: String
+            if let htmlBody = message.htmlBody, !htmlBody.isEmpty {
+                html = htmlBody
+            } else if let textBody = message.textBody, !textBody.isEmpty {
+                html = MarkdownToHTML.convert(textBody)
+            } else {
+                throw PostServerError.emptyBody(uid: uid)
             }
 
-            throw PostServerError.messageNotFound(uid: uid, mailbox: mailbox)
+            let subject = message.subject ?? "message-\(uid)"
+            let filename = Self.sanitizeFilename(subject) + ".pdf"
+
+            let pdfData = try await HTMLToPDF.render(html: html, logger: logger)
+            return AttachmentData(
+                filename: filename,
+                contentType: "application/pdf",
+                data: pdfData.base64EncodedString(),
+                size: pdfData.count
+            )
         }
     }
 
@@ -1659,16 +1660,6 @@ public actor PostServer {
         return message.header.additionalFields
     }
 
-    internal func collectHeaders(from stream: AsyncThrowingStream<Message, Error>) async throws -> [MessageHeader] {
-        var headers: [MessageHeader] = []
-
-        for try await message in stream {
-            headers.append(messageHeader(from: message))
-        }
-
-        return headers
-    }
-
     internal func messageHeader(from message: Message) -> MessageHeader {
         messageHeader(from: message.header)
     }
@@ -1686,19 +1677,55 @@ public actor PostServer {
         )
     }
 
-    /// Fetches the header data for `uids` in chunks, so a large result set never becomes one
+    /// Fetches the header data for `identifiers` in chunks, so a large set never becomes one
     /// oversized response.
-    internal func fetchHeaders(for uids: [UID], using connection: any MailboxCommandRunning) async throws -> [MessageHeader] {
+    internal func fetchInfos<T: MessageIdentifier>(
+        for identifiers: [T],
+        using connection: any MailboxCommandRunning
+    ) async throws -> [MessageInfo] {
         let chunkSize = 200
-        var headers: [MessageHeader] = []
-        var start = uids.startIndex
-        while start < uids.endIndex {
-            let end = uids.index(start, offsetBy: chunkSize, limitedBy: uids.endIndex) ?? uids.endIndex
-            let infos = try await connection.fetchHeaderInfos(using: MessageIdentifierSet(Array(uids[start..<end])))
-            headers.append(contentsOf: infos.map { messageHeader(from: $0) })
+        var infos: [MessageInfo] = []
+        var start = identifiers.startIndex
+        while start < identifiers.endIndex {
+            let end = identifiers.index(start, offsetBy: chunkSize, limitedBy: identifiers.endIndex) ?? identifiers.endIndex
+            infos.append(contentsOf: try await connection.fetchHeaderInfos(using: MessageIdentifierSet(Array(identifiers[start..<end]))))
             start = end
         }
-        return headers
+        return infos
+    }
+
+    /// Fetches the header data for `identifiers` as `MessageHeader`s, without the bodies.
+    internal func fetchHeaders<T: MessageIdentifier>(
+        for identifiers: [T],
+        using connection: any MailboxCommandRunning
+    ) async throws -> [MessageHeader] {
+        try await fetchInfos(for: identifiers, using: connection).map { messageHeader(from: $0) }
+    }
+
+    /// The message's header data and part structure, without the data of any part.
+    ///
+    /// SwiftMail's `fetchMessages(using:)` downloads every part, attachments included. Starting
+    /// from the outline, each tool downloads only the parts it uses (see `downloading`).
+    internal func fetchOutline(uid: UID, using server: IMAPServer) async throws -> Message? {
+        guard let info = try await server.fetchMessageInfo(for: uid) else {
+            return nil
+        }
+        return Message(header: info, parts: try await server.fetchStructure(uid))
+    }
+
+    /// `message` with the data of `parts` downloaded; every other part stays without data.
+    internal func downloading(
+        _ parts: [MessagePart],
+        of message: Message,
+        uid: UID,
+        using server: IMAPServer
+    ) async throws -> Message {
+        let sections = Set(parts.map(\.section))
+        var filled = message.parts
+        for index in filled.indices where sections.contains(filled[index].section) {
+            filled[index].data = try await server.fetchPart(section: filled[index].section, of: uid)
+        }
+        return Message(header: message.header, parts: filled)
     }
 
     internal func messageDetail(from message: Message, additionalHeaders: [String: String]? = nil) -> MessageDetail {
