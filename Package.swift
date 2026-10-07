@@ -29,7 +29,10 @@ let package = Package(
         // 1.13.0 requires JSONFoundation 3.1, whose JSONValue.jsonObject
         // IdleEventLogger uses; 1.10.1 still allowed JSONFoundation 2.4,
         // which predates it.
-        .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.13.0")),
+        // 1.14.0 reads a long reply line in linear time: before it, the CLI took
+        // quadratic time to read a large message (`post fetch --eml` of a 77 MB
+        // mail ran for minutes instead of 2 s).
+        .package(url: "https://github.com/Cocoanetics/SwiftMCP", .upToNextMajor(from: "1.14.0")),
         // 1.9.2 makes IDLE teardown stick: before 1.9.1, disconnect() only
         // closed the dedicated IDLE connection's socket and the self-healing
         // cycle task re-dialed the server, leaking the session's private
@@ -51,7 +54,10 @@ let package = Package(
         // floor keeps Post's address output identical across resolutions.
         // 1.14.0 sends the ESEARCH PARTIAL option only to servers that advertise
         // it, so `post search` works on Gmail and iCloud.
-        .package(url: "https://github.com/Cocoanetics/SwiftMail", .upToNextMajor(from: "1.14.0")),
+        // 1.15.0 adds searchCount, which countMessages uses: it asks for COUNT, MIN
+        // and MAX without the UID list, whose reply line for a large mailbox
+        // exceeds swift-nio-imap's 8 KiB line limit.
+        .package(url: "https://github.com/Cocoanetics/SwiftMail", .upToNextMajor(from: "1.15.0")),
         // 2.2.0 replaced the revision-pinned ZIPFoundation with tagged
         // swift-archive, so SwiftText is a normal version requirement again.
         // It declares swift-tools-version 6.3, which sets Post's toolchain
@@ -67,7 +73,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.11.0"),
         // Not used directly: SwiftPM fails to resolve this trait-gated transitive
         // dependency (via SwiftMCP → JSONFoundation) unless it is declared at the root.
-        .package(url: "https://github.com/swiftlang/swift-subprocess.git", from: "0.5.0")
+        // JSONFoundation 3.2.1 builds against 0.5 and 1.x, so both majors are allowed.
+        .package(url: "https://github.com/swiftlang/swift-subprocess.git", "0.5.0" ..< "2.0.0")
     ],
     targets: [
         .plugin(

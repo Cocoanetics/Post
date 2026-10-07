@@ -749,10 +749,12 @@ public actor PostServer {
             if flagged == true { criteria.append(.flagged) }
             if criteria.isEmpty { criteria.append(.all) }
 
-            let result: ExtendedSearchResult<UID> = try await connection.searchUIDs(
+            // COUNT, MIN and MAX only: the full UID list of a large mailbox is one reply
+            // line longer than swift-nio-imap's 8 KiB limit.
+            let result: ExtendedSearchResult<UID> = try await connection.searchCount(
                 identifierSet: nil,
                 criteria: criteria,
-                partialRange: nil
+                calendar: Calendar(identifier: .gregorian)
             )
             return SearchCount(
                 count: result.count,

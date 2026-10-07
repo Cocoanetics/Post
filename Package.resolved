@@ -1,13 +1,13 @@
 {
-  "originHash" : "f77697d134a214d5d026a5881ee253cf58a95d342564ebb148996f5f33fb72b1",
+  "originHash" : "4df95539bc96e03b7eee2a67456b2458dc5f67169bc92ba36d567dd1f77f5e6a",
   "pins" : [
     {
       "identity" : "jsonfoundation",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/JSONFoundation.git",
       "state" : {
-        "revision" : "faa74a06aed31f7baa770de108ff02470c431b63",
-        "version" : "3.2.0"
+        "revision" : "faceccfb9c72c9ba7c872053fc7cf479c1dc1a76",
+        "version" : "3.2.1"
       }
     },
     {
@@ -222,8 +222,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swiftlang/swift-subprocess.git",
       "state" : {
-        "revision" : "11633673a41f509f8945f23c96c7acd4adafd679",
-        "version" : "0.5.0"
+        "revision" : "b3937ab85dd32f6e9435914599c1519074769c1a",
+        "version" : "1.0.0"
       }
     },
     {
@@ -231,8 +231,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swiftlang/swift-syntax.git",
       "state" : {
-        "revision" : "79e4b74a295b6eb74a8b585e3a39d29e70c1dbd1",
-        "version" : "603.0.2"
+        "revision" : "050f1a346fbbac0ca2cfb15a95274f7bd1cf0ccf",
+        "version" : "604.0.0"
       }
     },
     {
@@ -258,8 +258,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftMail",
       "state" : {
-        "revision" : "164ac3ad09a54b4bb2a2be61fc0db520ef29e7aa",
-        "version" : "1.14.0"
+        "revision" : "1a681959579add669ae785d3d080b169156df60a",
+        "version" : "1.15.0"
       }
     },
     {
@@ -267,8 +267,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftMCP",
       "state" : {
-        "revision" : "3f7e8db79cf8647eb11b7b420909e0f74f16ab68",
-        "version" : "1.13.0"
+        "revision" : "fcbe9f43a0e87a1cfcea5cb8edd0e38a48afbc2f",
+        "version" : "1.14.0"
       }
     },
     {
