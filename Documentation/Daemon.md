@@ -84,6 +84,16 @@ Each key is a **server ID** — a short name you'll use with `--server` in the C
 |-------|------|---------|-------------|
 | `httpPort` | `Int` | — | Enable HTTP+SSE transport on this port (in addition to Bonjour) |
 
+## IMAP Connections
+
+Per server the daemon keeps:
+
+- **One primary connection** for listing, fetching, moving, flagging, drafts and everything else. It runs one request at a time: IMAP keeps the selected mailbox per connection, so a request selects its mailbox and finishes its commands before the next request may select another.
+- **Up to two extra connections** for searches, counts and raw `.eml` downloads (`post search`, `post fetch --eml`). Each is leased to one request at a time, so these can run while the primary connection is busy. They open on first use; one-at-a-time use only ever opens the first. If the server refuses an extra connection, the request runs on the primary connection instead.
+- **IDLE connections** for watched mailboxes (see below).
+
+Concurrent requests are safe: each returns the same result it would return on its own.
+
 ## IMAP IDLE
 
 IDLE is optional and can be enabled per server. When enabled, the daemon maintains a dedicated IMAP connection that listens for real-time mailbox changes — no polling needed.

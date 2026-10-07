@@ -3,6 +3,11 @@ import Logging
 import SwiftMail
 
 public actor IMAPConnectionManager {
+    /// Extra connections per account for searches and raw downloads, on top of the
+    /// primary connection and any IDLE connections. Kept small: servers cap the
+    /// connections per user (Dovecot 10 per IP, Gmail 15).
+    public static let extraConnectionsPerServer = 2
+
     private let configuration: PostConfiguration
     private var connections: [String: IMAPServer] = [:]
     /// In-flight connection tasks so concurrent callers share a single attempt.

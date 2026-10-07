@@ -166,6 +166,12 @@ public actor PostServer {
     }
 
     internal var connectionManager: IMAPConnectionManager
+    /// One lock per account, held for a whole operation on its primary connection, and the
+    /// leases for its extra connections. They live here, not in the connection manager, so a
+    /// configuration reload that replaces the manager keeps them: an operation that started
+    /// before the reload and one that starts after it still exclude each other.
+    private var primaryLocks: [String: AsyncSerialLock] = [:]
+    private var extraConnectionPools: [String: ConnectionSlotPool] = [:]
     private let apiKeyStore = APIKeyStore()
     private var scopedServerIDsByToken: [String: Set<String>] = [:]
     private var scopesByToken: [String: Set<String>] = [:]
@@ -229,11 +235,8 @@ public actor PostServer {
             // Stop all IDLE watches
             stopIdleWatches()
 
-            // Shut down existing connections
-            await connectionManager.shutdown()
-
-            // Replace connection manager with new config
-            connectionManager = IMAPConnectionManager(configuration: newConfig)
+            // Shut down existing connections and replace the connection manager
+            await replaceConnectionManager(configuration: newConfig)
             do {
                 let keyCount = try primeAPIKeyScopes()
                 logger.info("API key scopes refreshed (\(keyCount) key(s)).")
@@ -248,6 +251,35 @@ public actor PostServer {
         } catch {
             logger.error("Failed to reload configuration: \(error.localizedDescription)")
         }
+    }
+
+    /// Shuts down the current connections and switches to a connection manager for
+    /// `configuration`. The per-account locks and extra-connection leases are kept.
+    internal func replaceConnectionManager(configuration: PostConfiguration) async {
+        await connectionManager.shutdown()
+        connectionManager = IMAPConnectionManager(configuration: configuration)
+    }
+
+    /// The lock that keeps "select a mailbox, then run commands in it" together on the
+    /// account's shared primary connection.
+    internal func primaryLock(for serverId: String) -> AsyncSerialLock {
+        if let lock = primaryLocks[serverId] {
+            return lock
+        }
+        let lock = AsyncSerialLock()
+        primaryLocks[serverId] = lock
+        return lock
+    }
+
+    /// The leases for the account's extra connections
+    /// (`IMAPConnectionManager.extraConnectionsPerServer` slots).
+    internal func extraConnectionPool(for serverId: String) -> ConnectionSlotPool {
+        if let pool = extraConnectionPools[serverId] {
+            return pool
+        }
+        let pool = ConnectionSlotPool(size: IMAPConnectionManager.extraConnectionsPerServer)
+        extraConnectionPools[serverId] = pool
+        return pool
     }
 
     /// Lists all configured IMAP servers with their connection details
@@ -315,12 +347,12 @@ public actor PostServer {
             throw PostServerError.invalidUIDSet(uids)
         }
 
-        return try await withServer(serverId: serverId) { server in
-            _ = try await server.selectMailbox(mailbox)
+        return try await withExtraConnection(serverId: serverId) { connection in
+            _ = try await connection.selectMailbox(mailbox)
             var results: [RawMessage] = []
 
             for uid in set.toArray() {
-                let data = try await server.fetchRawMessage(identifier: uid)
+                let data = try await connection.fetchRawMessage(identifier: uid)
                 results.append(RawMessage(uid: Int(uid.value), rawData: data))
             }
 
@@ -395,8 +427,8 @@ public actor PostServer {
         limit: Int = 100,
         afterUid: Int? = nil
     ) async throws -> SearchResult {
-        try await withServer(serverId: serverId) { server in
-            _ = try await server.selectMailbox(mailbox)
+        try await withExtraConnection(serverId: serverId) { connection in
+            _ = try await connection.selectMailbox(mailbox)
 
             var criteria: [SearchCriteria] = []
 
@@ -454,7 +486,7 @@ public actor PostServer {
 
             // Use extended search with PARTIAL for server-side paging.
             // RFC 9394 window is 1-based relative to the current scoped search result set.
-            let result = try await server.extendedSearch(
+            let result = try await connection.searchUIDs(
                 identifierSet: identifierSet,
                 criteria: criteria,
                 partialRange: makeFirstPartialRange(limit: limit)
@@ -483,9 +515,8 @@ public actor PostServer {
                 )
             }
 
-            // Fetch headers for the limited UIDs
-            let uidSet = MessageIdentifierSet(limitedUIDs)
-            let headers = try await collectHeaders(from: server.fetchMessages(using: uidSet))
+            // Fetch only the headers for the limited UIDs, not the full messages
+            let headers = try await fetchHeaders(for: limitedUIDs, using: connection)
             let sortedHeaders = headers.sorted { $0.uid > $1.uid }
             
             // Calculate returned range
@@ -697,8 +728,8 @@ public actor PostServer {
         seen: Bool? = nil,
         flagged: Bool? = nil
     ) async throws -> SearchCount {
-        try await withServer(serverId: serverId) { server in
-            _ = try await server.selectMailbox(mailbox)
+        try await withExtraConnection(serverId: serverId) { connection in
+            _ = try await connection.selectMailbox(mailbox)
 
             var criteria: [SearchCriteria] = []
             if let fromAddress, !fromAddress.isEmpty { criteria.append(.from(fromAddress)) }
@@ -711,7 +742,11 @@ public actor PostServer {
             if flagged == true { criteria.append(.flagged) }
             if criteria.isEmpty { criteria.append(.all) }
 
-            let result: ExtendedSearchResult<UID> = try await server.extendedSearch(criteria: criteria)
+            let result: ExtendedSearchResult<UID> = try await connection.searchUIDs(
+                identifierSet: nil,
+                criteria: criteria,
+                partialRange: nil
+            )
             return SearchCount(
                 count: result.count,
                 minUID: result.min.map { Int($0.value) },
@@ -817,10 +852,10 @@ public actor PostServer {
         guard (1...Int(UInt32.max)).contains(uid) else {
             throw PostServerError.invalidUID(uid)
         }
-        return try await withServer(serverId: serverId) { server in
-            _ = try await server.selectMailbox(mailbox)
+        return try await withExtraConnection(serverId: serverId) { connection in
+            _ = try await connection.selectMailbox(mailbox)
             let uid = UID(UInt32(uid))
-            return try await server.fetchRawMessage(identifier: uid)
+            return try await connection.fetchRawMessage(identifier: uid)
         }
     }
 
@@ -1436,10 +1471,30 @@ public actor PostServer {
         return results.sorted()
     }
 
+    /// Runs `operation` on the account's shared primary connection, one operation at a time.
+    ///
+    /// IMAP keeps the selected mailbox per connection, and operations select a mailbox and
+    /// then run further commands. Holding the account's lock for the whole operation stops a
+    /// concurrent request's SELECT from landing in between, which made searches return
+    /// another mailbox's results and could make move, trash or expunge act on the same UIDs
+    /// in the wrong mailbox.
     internal func withServer<T: Sendable>(serverId: String, operation: (SwiftMail.IMAPServer) async throws -> T) async throws -> T {
         try await assertScopeAllowed("imap")
         try await assertServerAccessAllowed(serverId)
 
+        let lock = primaryLock(for: serverId)
+        await lock.lock()
+        do {
+            let result = try await runOnPrimaryConnection(serverId: serverId, operation: operation)
+            await lock.unlock()
+            return result
+        } catch {
+            await lock.unlock()
+            throw error
+        }
+    }
+
+    private func runOnPrimaryConnection<T: Sendable>(serverId: String, operation: (SwiftMail.IMAPServer) async throws -> T) async throws -> T {
         do {
             let server = try await connectionManager.connection(for: serverId)
             return try await operation(server)
@@ -1452,6 +1507,62 @@ public actor PostServer {
             let server = try await connectionManager.reconnect(for: serverId)
             return try await operation(server)
         }
+    }
+
+    /// Runs `operation` on one of the account's extra connections, leased for the whole
+    /// operation, so searches and raw downloads neither wait for nor disturb the work on
+    /// the primary connection. If the server refuses an extra connection (for example
+    /// because of its connection limit), the operation runs on the primary connection.
+    internal func withExtraConnection<T: Sendable>(serverId: String, operation: (any MailboxCommandRunning) async throws -> T) async throws -> T {
+        try await assertScopeAllowed("imap")
+        try await assertServerAccessAllowed(serverId)
+
+        let pool = extraConnectionPool(for: serverId)
+        let slot = await pool.acquire()
+        do {
+            let result = try await runOnExtraConnection(slot: slot, serverId: serverId, operation: operation)
+            await pool.release(slot)
+            return result
+        } catch {
+            await pool.release(slot)
+            throw error
+        }
+    }
+
+    private func runOnExtraConnection<T: Sendable>(slot: Int, serverId: String, operation: (any MailboxCommandRunning) async throws -> T) async throws -> T {
+        let connection: IMAPNamedConnection
+        do {
+            connection = try await extraConnection(slot: slot, serverId: serverId)
+        } catch {
+            logger.warning("No extra connection for \(serverId), using the primary connection: \(String(describing: error))")
+            return try await withServer(serverId: serverId) { server in
+                try await operation(server)
+            }
+        }
+
+        do {
+            return try await operation(connection)
+        } catch {
+            guard shouldReconnect(after: error) else {
+                throw error
+            }
+
+            logger.warning("Extra connection \(slot) failed for \(serverId), reconnecting: \(String(describing: error))")
+            try? await connection.disconnect()
+            let fresh = try await extraConnection(slot: slot, serverId: serverId)
+            return try await operation(fresh)
+        }
+    }
+
+    /// The account's extra connection for `slot`, connected and logged in. SwiftMail keeps
+    /// one connection per name, so the same slot reuses the same connection.
+    private func extraConnection(slot: Int, serverId: String) async throws -> IMAPNamedConnection {
+        let server = try await connectionManager.connection(for: serverId)
+        let connection = try await server.connection(named: "post-extra-\(slot)")
+        if await !connection.isConnected {
+            try await connection.connect()
+        }
+        return connection
     }
 
     private func shouldReconnect(after error: Error) -> Bool {
@@ -1559,16 +1670,35 @@ public actor PostServer {
     }
 
     internal func messageHeader(from message: Message) -> MessageHeader {
-        let sanitizedSubject = UnicodeAbuseSummary.sanitize(message.subject ?? "(No Subject)", field: "Subject")
+        messageHeader(from: message.header)
+    }
+
+    internal func messageHeader(from info: MessageInfo) -> MessageHeader {
+        let sanitizedSubject = UnicodeAbuseSummary.sanitize(info.subject ?? "(No Subject)", field: "Subject")
 
         return MessageHeader(
-            uid: messageUID(from: message),
-            from: message.from ?? "Unknown",
+            uid: info.uid.map { Int($0.value) } ?? Int(info.sequenceNumber.value),
+            from: info.from ?? "Unknown",
             subject: sanitizedSubject.text,
-            date: formatDate(message.date),
-            flags: MessageFlags(message.flags),
+            date: formatDate(info.date),
+            flags: MessageFlags(info.flags),
             unicodeAbuse: sanitizedSubject.unicodeAbuse
         )
+    }
+
+    /// Fetches the header data for `uids` in chunks, so a large result set never becomes one
+    /// oversized response.
+    internal func fetchHeaders(for uids: [UID], using connection: any MailboxCommandRunning) async throws -> [MessageHeader] {
+        let chunkSize = 200
+        var headers: [MessageHeader] = []
+        var start = uids.startIndex
+        while start < uids.endIndex {
+            let end = uids.index(start, offsetBy: chunkSize, limitedBy: uids.endIndex) ?? uids.endIndex
+            let infos = try await connection.fetchHeaderInfos(using: MessageIdentifierSet(Array(uids[start..<end])))
+            headers.append(contentsOf: infos.map { messageHeader(from: $0) })
+            start = end
+        }
+        return headers
     }
 
     internal func messageDetail(from message: Message, additionalHeaders: [String: String]? = nil) -> MessageDetail {
