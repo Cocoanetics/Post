@@ -166,6 +166,12 @@ public actor PostServer {
     }
 
     internal var connectionManager: IMAPConnectionManager
+    /// One lock per account, held for a whole operation on its primary connection, and the
+    /// leases for its extra connections. They live here, not in the connection manager, so a
+    /// configuration reload that replaces the manager keeps them: an operation that started
+    /// before the reload and one that starts after it still exclude each other.
+    private var primaryLocks: [String: AsyncSerialLock] = [:]
+    private var extraConnectionPools: [String: ConnectionSlotPool] = [:]
     private let apiKeyStore = APIKeyStore()
     private var scopedServerIDsByToken: [String: Set<String>] = [:]
     private var scopesByToken: [String: Set<String>] = [:]
@@ -229,11 +235,8 @@ public actor PostServer {
             // Stop all IDLE watches
             stopIdleWatches()
 
-            // Shut down existing connections
-            await connectionManager.shutdown()
-
-            // Replace connection manager with new config
-            connectionManager = IMAPConnectionManager(configuration: newConfig)
+            // Shut down existing connections and replace the connection manager
+            await replaceConnectionManager(configuration: newConfig)
             do {
                 let keyCount = try primeAPIKeyScopes()
                 logger.info("API key scopes refreshed (\(keyCount) key(s)).")
@@ -248,6 +251,35 @@ public actor PostServer {
         } catch {
             logger.error("Failed to reload configuration: \(error.localizedDescription)")
         }
+    }
+
+    /// Shuts down the current connections and switches to a connection manager for
+    /// `configuration`. The per-account locks and extra-connection leases are kept.
+    internal func replaceConnectionManager(configuration: PostConfiguration) async {
+        await connectionManager.shutdown()
+        connectionManager = IMAPConnectionManager(configuration: configuration)
+    }
+
+    /// The lock that keeps "select a mailbox, then run commands in it" together on the
+    /// account's shared primary connection.
+    internal func primaryLock(for serverId: String) -> AsyncSerialLock {
+        if let lock = primaryLocks[serverId] {
+            return lock
+        }
+        let lock = AsyncSerialLock()
+        primaryLocks[serverId] = lock
+        return lock
+    }
+
+    /// The leases for the account's extra connections
+    /// (`IMAPConnectionManager.extraConnectionsPerServer` slots).
+    internal func extraConnectionPool(for serverId: String) -> ConnectionSlotPool {
+        if let pool = extraConnectionPools[serverId] {
+            return pool
+        }
+        let pool = ConnectionSlotPool(size: IMAPConnectionManager.extraConnectionsPerServer)
+        extraConnectionPools[serverId] = pool
+        return pool
     }
 
     /// Lists all configured IMAP servers with their connection details
@@ -1450,7 +1482,7 @@ public actor PostServer {
         try await assertScopeAllowed("imap")
         try await assertServerAccessAllowed(serverId)
 
-        let lock = await connectionManager.primaryLock(for: serverId)
+        let lock = primaryLock(for: serverId)
         await lock.lock()
         do {
             let result = try await runOnPrimaryConnection(serverId: serverId, operation: operation)
@@ -1485,7 +1517,7 @@ public actor PostServer {
         try await assertScopeAllowed("imap")
         try await assertServerAccessAllowed(serverId)
 
-        let pool = await connectionManager.extraConnectionPool(for: serverId)
+        let pool = extraConnectionPool(for: serverId)
         let slot = await pool.acquire()
         do {
             let result = try await runOnExtraConnection(slot: slot, serverId: serverId, operation: operation)
