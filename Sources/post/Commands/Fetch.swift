@@ -20,7 +20,7 @@ extension PostCLI {
         @Option(name: .long, help: "Body format: text, html, or markdown (default: markdown)")
         var body: BodyFormat = .markdown
 
-        @Option(name: .long, help: "Output path — directory or filename for .eml or text files")
+        @Option(name: .long, help: "Output path for .eml or text files — an existing directory, or a path ending in /, takes a file named after the UID; anything else is the filename to write")
         var output: String?
 
         @Option(name: .long, help: "Server identifier")
@@ -125,21 +125,10 @@ extension PostCLI {
                     throw ValidationError("Invalid UID set '\(uid)'. Use comma-separated values or ranges (e.g. 1-3,5,10-20).")
                 }
 
-                let outURL: URL? = output.map { URL(fileURLWithPath: $0) }
-                let isExplicitFile = Self.isExplicitOutputFile(outURL)
                 let uidArray = uidSet.toArray()
 
-                if isExplicitFile && uidArray.count > 1 {
+                if let output, !OutputPath.namesDirectory(output), uidArray.count > 1 {
                     throw ValidationError("Cannot use a filename for --output when exporting multiple UIDs. Use a directory instead.")
-                }
-
-                let outputDir: URL?
-                if let outURL, eml || !globals.json {
-                    let dir = isExplicitFile ? outURL.deletingLastPathComponent() : outURL
-                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                    outputDir = dir
-                } else {
-                    outputDir = nil
                 }
 
                 var jsonMessages: [FormattedMessage] = []
@@ -148,22 +137,16 @@ extension PostCLI {
                     let uidValue = Int(messageUID.value)
 
                     if eml {
-                        guard let outputDir else {
+                        guard let output else {
                             throw ValidationError("--eml requires --output")
                         }
 
                         let emlData = try await client.downloadEml(serverId: serverId, uid: uidValue, mailbox: mailbox)
                         guard !emlData.isEmpty else { continue }
                         foundCount += 1
-                        let destination: URL
-                        if isExplicitFile, let outURL {
-                            destination = outURL
-                        } else {
-                            destination = outputDir.appendingPathComponent("\(uidValue).eml")
-                        }
-                        let displayName = destination.lastPathComponent
+                        let destination = try OutputPath.destination(for: output, named: "\(uidValue).eml")
                         try emlData.write(to: destination)
-                        print("Saved \(displayName) to \(destination.path)")
+                        print("Saved \(destination.lastPathComponent) to \(destination.path)")
                         continue
                     }
 
@@ -188,11 +171,10 @@ extension PostCLI {
                                 body: formattedBody,
                                 headers: headers
                             ))
-                        } else if let outputDir {
-                            let filename = "\(message.uid).txt"
-                            let destination = outputDir.appendingPathComponent(filename)
+                        } else if let output {
+                            let destination = try OutputPath.destination(for: output, named: "\(message.uid).txt")
                             try formattedBody.text.write(to: destination, atomically: true, encoding: .utf8)
-                            print("Saved \(filename) to \(destination.path)")
+                            print("Saved \(destination.lastPathComponent) to \(destination.path)")
                         } else {
                             print("UID: \(message.uid)")
                             print("From: \(message.from)")
@@ -218,17 +200,6 @@ extension PostCLI {
                     jsonMessages.printAsJSON()
                 }
             }
-        }
-
-        static func isExplicitOutputFile(_ url: URL?, fileManager: FileManager = .default) -> Bool {
-            guard let url else { return false }
-
-            var isDirectory: ObjCBool = false
-            if fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
-                return false
-            }
-
-            return !url.pathExtension.isEmpty
         }
     }
 }

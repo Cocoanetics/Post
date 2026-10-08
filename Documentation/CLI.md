@@ -31,14 +31,16 @@ Fetch one or more messages by UID. Supports comma-separated values and ranges.
 ```bash
 post fetch 12199                                    # Print message to stdout
 post fetch 12199 --json                             # JSON output
-post fetch 12198,12199 --eml --out ./backup         # Download as .eml files
-post fetch 12160-12164 --eml --out ./backup         # Range of UIDs
-post fetch 12199 --out ./texts                      # Save text body as .txt
+post fetch 12198,12199 --eml --output ./backup/     # Download as .eml files
+post fetch 12160-12164 --eml --output ./backup/     # Range of UIDs
+post fetch 12199 --output ./texts/                  # Save text body as .txt
+post fetch 12199 --output 12199.txt                 # Save text body under a chosen name
 post fetch 12199 --server gmail --mailbox Archive   # Specific server + mailbox
 ```
 
 **Notes:**
-- `--eml` requires `--out` (output directory)
+- `--eml` requires `--output`
+- `--output` names a directory if it already exists or ends in `/`; anything else is the file to write, so a multi-UID fetch needs a directory
 - Missing UIDs in a range are silently skipped
 - If no messages are found at all, exits with an error
 
@@ -48,7 +50,8 @@ post fetch 12199 --server gmail --mailbox Archive   # Specific server + mailbox
 post attachment 12199                                # Download first attachment
 post attachment 12199 --filename "invoice.pdf"       # Download specific file
 post attachment 12199 --cid "image-content-id"       # Download inline CID asset
-post attachment 12199 --output ./downloads           # Custom output directory
+post attachment 12199 --output ./downloads/          # Into a directory, created if missing
+post attachment 12199 --output invoice-2025.pdf      # Under a chosen filename
 ```
 
 ### Searching

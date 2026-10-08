@@ -21,7 +21,7 @@ extension PostCLI {
         @Option(name: .long, help: "Mailbox name")
         var mailbox: String = "INBOX"
 
-        @Option(name: .long, help: "Output path — directory or filename (default: current directory)")
+        @Option(name: .long, help: "Output path — an existing directory, or a path ending in /, takes the attachment's own filename; anything else is the filename to write")
         var output: String = "."
 
         func validate() throws {
@@ -40,11 +40,7 @@ extension PostCLI {
                     return
                 }
 
-                let outURL = URL(fileURLWithPath: output)
-                let isExplicitFile = outURL.pathExtension.count > 0
-                let outputDir = isExplicitFile ? outURL.deletingLastPathComponent() : outURL
-                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-                let destination = isExplicitFile ? outURL : outputDir.appendingPathComponent(attachment.filename)
+                let destination = try OutputPath.destination(for: output, named: attachment.filename)
                 let displayName = destination.lastPathComponent
                 try data.write(to: destination)
                 print("Saved \(displayName) (\(attachment.contentType), \(attachment.size.formattedAsBytes())) to \(destination.path)")
