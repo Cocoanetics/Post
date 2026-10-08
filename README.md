@@ -26,10 +26,10 @@ A fast command-line client for searching, reading, downloading, and managing ema
 ```bash
 post list --server work --limit 10
 post fetch 12199 --server work
-post fetch 12198,12199 --eml --out ./backup
+post fetch 12198,12199 --eml --output ./backup/
 post search --from "amazon" --since 2025-01-01
 post move 12345 Archive
-post attachment 12199 --output ./downloads
+post attachment 12199 --output ./downloads/
 post attachment 12199 --cid "image-content-id"
 post draft --to colleague@example.com --subject "Update" --body email.md
 ```
