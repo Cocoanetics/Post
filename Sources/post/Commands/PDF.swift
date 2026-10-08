@@ -19,7 +19,7 @@ extension PostCLI {
         @Option(name: .long, help: "Mailbox name")
         var mailbox: String = "INBOX"
 
-        @Option(name: .long, help: "Output path — directory or filename ending in .pdf (default: current directory)")
+        @Option(name: .long, help: "Output path — an existing directory, or a path ending in /, takes a file named after the message; anything else is the filename to write")
         var output: String = "."
 
         func validate() throws {
@@ -35,16 +35,11 @@ extension PostCLI {
                     throw ValidationError("Invalid UID set '\(uid)'.")
                 }
 
-                let outURL = URL(fileURLWithPath: output)
-                let isExplicitFile = outURL.pathExtension.lowercased() == "pdf"
                 let uidArray = uidSet.toArray()
 
-                if isExplicitFile && uidArray.count > 1 {
+                if !OutputPath.namesDirectory(output) && uidArray.count > 1 {
                     throw ValidationError("Cannot use a filename for --output when exporting multiple UIDs. Use a directory instead.")
                 }
-
-                let outputDir = isExplicitFile ? outURL.deletingLastPathComponent() : outURL
-                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
 
                 var foundCount = 0
                 for messageUID in uidArray {
@@ -55,7 +50,7 @@ extension PostCLI {
                         continue
                     }
 
-                    let destination = isExplicitFile ? outURL : outputDir.appendingPathComponent(result.filename)
+                    let destination = try OutputPath.destination(for: output, named: result.filename)
                     let displayName = destination.lastPathComponent
                     try data.write(to: destination)
                     print("Saved \(displayName) (\(result.size.formattedAsBytes())) to \(destination.path)")
