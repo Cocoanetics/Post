@@ -58,7 +58,7 @@ let package = Package(
         // 1.15.0 adds searchCount, which countMessages uses: it asks for COUNT, MIN
         // and MAX without the UID list, whose reply line for a large mailbox
         // exceeds swift-nio-imap's 8 KiB line limit.
-        // Pinned by revision to Cocoanetics/SwiftMail#253, which removes that 8 KiB
+        // Pinned by revision to SwiftMail main after #253, which removes that 8 KiB
         // limit: it pins swift-nio-imap to main for apple/swift-nio-imap#849 and
         // hands IMAPClientHandler its 1 MB responseBufferLimit. Before it, the
         // BODYSTRUCTURE of a mail with 74 attachments was one reply line too long,
@@ -66,7 +66,7 @@ let package = Package(
         // PayloadTooLargeError. A revision-pinned dependency can't be resolved by
         // version, so return to .upToNextMajor once swift-nio-imap tags a release
         // with #849 and SwiftMail moves back to a version requirement.
-        .package(url: "https://github.com/Cocoanetics/SwiftMail", revision: "c9792f963621415a23300b1dfaae0ab224893610"),
+        .package(url: "https://github.com/Cocoanetics/SwiftMail", revision: "c3b7bc3a6b77509655668651c744934470fa2d86"),
         // 2.2.0 replaced the revision-pinned ZIPFoundation with tagged
         // swift-archive, so SwiftText is a normal version requirement again.
         // It declares swift-tools-version 6.3, which sets Post's toolchain
