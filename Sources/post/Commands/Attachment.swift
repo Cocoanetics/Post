@@ -21,7 +21,8 @@ extension PostCLI {
         @Option(name: .long, help: "Mailbox name")
         var mailbox: String = "INBOX"
 
-        @Option(name: .long, help: "Output path — an existing directory, or a path ending in /, takes the attachment's own filename; anything else is the filename to write")
+        @Option(name: .long, help: ArgumentHelp("Output path — an existing directory, or a path ending in /, takes the attachment's own filename "
+                + "(folders in it, as Outlook writes them, become subfolders); anything else is the filename to write"))
         var output: String = "."
 
         func validate() throws {
@@ -40,7 +41,7 @@ extension PostCLI {
                     return
                 }
 
-                let destination = try OutputPath.destination(for: output, named: attachment.filename)
+                let destination = try OutputPath.destination(for: output, attachmentNamed: attachment.filename)
                 let displayName = destination.lastPathComponent
                 try data.write(to: destination)
                 print("Saved \(displayName) (\(attachment.contentType), \(attachment.size.formattedAsBytes())) to \(destination.path)")

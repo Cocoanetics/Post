@@ -98,4 +98,40 @@ final class OutputPathTests: XCTestCase {
         XCTAssertTrue(OutputPath.namesDirectory(directory.path + "/"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
     }
+
+    // MARK: - Attachment names with folders
+
+    func testOutlookPathBecomesSubfolders() throws {
+        // Outlook names a file attached from a folder after its Windows path.
+        let directory = try makeTemporaryDirectory()
+
+        let destination = try OutputPath.destination(
+            for: directory.path, attachmentNamed: #"zpo-berufung\reference\akt.md"#)
+
+        XCTAssertEqual(destination, directory.appendingPathComponent("zpo-berufung/reference/akt.md"))
+        XCTAssertTrue(isDirectory(directory.appendingPathComponent("zpo-berufung/reference")))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    func testAttachmentPathStaysInsideTheDirectory() {
+        XCTAssertEqual(OutputPath.relativePath(forAttachmentNamed: "../../.zshrc"), [".zshrc"])
+        XCTAssertEqual(OutputPath.relativePath(forAttachmentNamed: "/etc/passwd"), ["etc", "passwd"])
+        XCTAssertEqual(OutputPath.relativePath(forAttachmentNamed: #"C:\Users\x\a.pdf"#), ["Users", "x", "a.pdf"])
+        XCTAssertEqual(OutputPath.relativePath(forAttachmentNamed: #"\\server\share\.\b.pdf"#),
+                       ["server", "share", "b.pdf"])
+        XCTAssertEqual(OutputPath.relativePath(forAttachmentNamed: #"..\.."#), ["attachment"])
+    }
+
+    func testPlainAttachmentNameIsUnchanged() throws {
+        let directory = try makeTemporaryDirectory()
+
+        XCTAssertEqual(try OutputPath.destination(for: directory.path, attachmentNamed: "vertrag.pdf"),
+                       directory.appendingPathComponent("vertrag.pdf"))
+    }
+
+    func testAttachmentNameIsIgnoredWhenOutputIsAFilename() throws {
+        let destination = try makeTemporaryDirectory().appendingPathComponent("renamed.md")
+
+        XCTAssertEqual(try OutputPath.destination(for: destination.path, attachmentNamed: #"a\b\c.md"#), destination)
+    }
 }

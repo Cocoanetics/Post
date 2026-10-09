@@ -134,7 +134,8 @@ enum LocalMessageFile {
         @Option(name: .long, help: "Section of a single part to write out, as `--list-parts` prints it (e.g. 4.2)")
         var part: String?
 
-        @Option(name: .long, help: "Output path for --part — an existing directory, or a path ending in /, takes a file named after the part; anything else is the filename to write")
+        @Option(name: .long, help: ArgumentHelp("Output path for --part — an existing directory, or a path ending in /, takes a file named after the part "
+                + "(folders in its name become subfolders); anything else is the filename to write"))
         var output: String = "."
 
         func validate() throws {
@@ -226,7 +227,10 @@ enum LocalMessageFile {
             throw ValidationError("Part \(section) (\(part.contentType)) carries no bytes of its own.\(hint)")
         }
 
-        let destination = try OutputPath.destination(for: output, named: part.suggestedFilename)
+        // The part's own name, not `suggestedFilename`, which strips `\` and
+        // `/` and would run a path's folders together into one name.
+        let destination = try OutputPath.destination(
+            for: output, attachmentNamed: part.filename ?? part.suggestedFilename)
         try data.write(to: destination)
         print("Saved \(destination.lastPathComponent) (\(part.contentType), \(data.count.formattedAsBytes())) "
               + "to \(destination.path)")
