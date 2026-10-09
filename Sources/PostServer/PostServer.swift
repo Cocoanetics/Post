@@ -823,7 +823,7 @@ public actor PostServer {
             }
 
             return AttachmentData(
-                filename: part.filename ?? part.suggestedFilename,
+                filename: part.filename.flatMap { $0.isEmpty ? nil : $0 } ?? part.suggestedFilename,
                 contentType: part.contentType,
                 data: data.base64EncodedString(),
                 size: data.count

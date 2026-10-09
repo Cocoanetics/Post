@@ -228,9 +228,10 @@ enum LocalMessageFile {
         }
 
         // The part's own name, not `suggestedFilename`, which strips `\` and
-        // `/` and would run a path's folders together into one name.
-        let destination = try OutputPath.destination(
-            for: output, attachmentNamed: part.filename ?? part.suggestedFilename)
+        // `/` and would run a path's folders together into one name. An empty
+        // name counts as none, so `suggestedFilename` names it (`part_2.pdf`).
+        let name = part.filename.flatMap { $0.isEmpty ? nil : $0 } ?? part.suggestedFilename
+        let destination = try OutputPath.destination(for: output, attachmentNamed: name)
         try data.write(to: destination)
         print("Saved \(destination.lastPathComponent) (\(part.contentType), \(data.count.formattedAsBytes())) "
               + "to \(destination.path)")
