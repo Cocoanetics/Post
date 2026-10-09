@@ -58,7 +58,7 @@ let package = Package(
         // 1.15.0 adds searchCount, which countMessages uses: it asks for COUNT, MIN
         // and MAX without the UID list, whose reply line for a large mailbox
         // exceeds swift-nio-imap's 8 KiB line limit.
-        // Pinned by revision to SwiftMail main after #253, which removes that 8 KiB
+        // Pinned by revision to SwiftMail 1.16.0 (#253), which removes that 8 KiB
         // limit: it pins swift-nio-imap to main for apple/swift-nio-imap#849 and
         // hands IMAPClientHandler its 1 MB responseBufferLimit. Before it, the
         // BODYSTRUCTURE of a mail with 74 attachments was one reply line too long,
