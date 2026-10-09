@@ -66,7 +66,10 @@ let package = Package(
         // PayloadTooLargeError. A revision-pinned dependency can't be resolved by
         // version, so return to .upToNextMajor once swift-nio-imap tags a release
         // with #849 and SwiftMail moves back to a version requirement.
-        .package(url: "https://github.com/Cocoanetics/SwiftMail", revision: "c3b7bc3a6b77509655668651c744934470fa2d86"),
+        // 1.16.0 also keeps the backslashes in attachment names that Outlook
+        // writes unescaped (#254): that mail's files are named after their
+        // Windows paths, such as zpo-berufung\reference\akt.md.
+        .package(url: "https://github.com/Cocoanetics/SwiftMail", revision: "88c45cbd31b347b373f7c87e197be63eb95efbc2"),
         // 2.2.0 replaced the revision-pinned ZIPFoundation with tagged
         // swift-archive, so SwiftText is a normal version requirement again.
         // It declares swift-tools-version 6.3, which sets Post's toolchain
