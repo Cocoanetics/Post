@@ -37,10 +37,10 @@ final class LocalPartExtractionTests: XCTestCase {
     --outer--
     """
 
-    private func writeSampleEML() throws -> String {
+    private func writeSampleEML(_ eml: String = sampleEML) throws -> String {
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("post-parts-\(UUID().uuidString).eml")
-        try Data(Self.sampleEML.utf8).write(to: url)
+        try Data(eml.utf8).write(to: url)
         addTeardownBlock { try? FileManager.default.removeItem(at: url) }
         return url.path
     }
@@ -110,6 +110,18 @@ final class LocalPartExtractionTests: XCTestCase {
         try LocalMessageFile.extract(message, section: "2", to: destination.path)
 
         XCTAssertEqual(try Data(contentsOf: destination), Data("%PDF-1.7 fake".utf8))
+    }
+
+    func testExtractNamesAnEmptyFilenameAfterThePart() throws {
+        // `filename=""` is no name; the part is named after its section and type.
+        let eml = Self.sampleEML.replacingOccurrences(of: "\"vertrag.pdf\"", with: "\"\"")
+        let message = try LocalMessageFile.read(try writeSampleEML(eml), as: .eml)
+        let directory = try makeOutputDirectory()
+
+        try LocalMessageFile.extract(message, section: "2", to: directory.path)
+
+        let written = directory.appendingPathComponent("part_2.pdf")
+        XCTAssertEqual(try Data(contentsOf: written), Data("%PDF-1.7 fake".utf8))
     }
 
     func testExtractNamesTheAvailableSectionsWhenOneIsWrong() throws {
