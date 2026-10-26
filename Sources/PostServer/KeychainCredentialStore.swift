@@ -36,7 +36,7 @@ public final class KeychainCredentialStore: Sendable {
         let protocolAttr = protocolAttribute(for: port, type: type)
 
         // Delete existing if present, then re-add
-        try? delete(label: id, type: type)
+        try? deleteLocked(label: id, type: type)
 
         let attrs: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
@@ -95,7 +95,11 @@ public final class KeychainCredentialStore: Sendable {
     public func delete(label: String, type: CredentialType = .imap) throws {
         keychainLock.lock()
         defer { keychainLock.unlock() }
+        try deleteLocked(label: label, type: type)
+    }
 
+    /// Deletes the credential; the caller must already hold `keychainLock`.
+    private func deleteLocked(label: String, type: CredentialType) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
             kSecAttrLabel as String: label,
