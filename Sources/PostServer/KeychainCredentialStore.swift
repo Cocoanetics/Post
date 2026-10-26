@@ -2,7 +2,8 @@
 import Foundation
 import Security
 
-private let keychainLock = NSLock()
+/// Recursive so `store` can call `delete` while holding the lock.
+private let keychainLock = NSRecursiveLock()
 
 /// Manages IMAP and SMTP credentials in the user's default Keychain (login keychain).
 ///
