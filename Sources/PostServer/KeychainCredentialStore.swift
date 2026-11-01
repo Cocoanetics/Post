@@ -56,7 +56,107 @@ public final class KeychainCredentialStore: Sendable {
         }
     }
 
+    /// `kSecAttrComment` value marking an item whose data is OAuth JSON, not a password.
+    public static let oauthComment = "oauth"
+
+    /// Stores or replaces OAuth credentials for a server ID. The item's data is the
+    /// credentials as JSON; the account is the email address.
+    public func storeOAuth(id: String, host: String, port: Int, credentials: OAuthCredentials, type: CredentialType = .imap) throws {
+        keychainLock.lock()
+        defer { keychainLock.unlock() }
+
+        try? delete(label: id, type: type)
+
+        let attrs: [String: Any] = [
+            kSecClass as String: kSecClassInternetPassword,
+            kSecAttrServer as String: host,
+            kSecAttrPort as String: port,
+            kSecAttrAccount as String: credentials.email,
+            kSecAttrProtocol as String: protocolAttribute(for: port, type: type),
+            kSecAttrLabel as String: id,
+            kSecAttrDescription as String: type.rawValue,
+            kSecAttrComment as String: Self.oauthComment,
+            kSecValueData as String: try Self.encode(credentials)
+        ]
+
+        let status = SecItemAdd(attrs as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw KeychainError.operationFailed(status, "add")
+        }
+    }
+
+    /// Retrieves OAuth credentials by server ID label, or nil if the item is missing
+    /// or holds a password.
+    public func oauthCredentials(forLabel id: String, type: CredentialType = .imap) throws -> (credential: FullCredential, oauth: OAuthCredentials)? {
+        keychainLock.lock()
+        defer { keychainLock.unlock() }
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassInternetPassword,
+            kSecAttrLabel as String: id,
+            kSecAttrDescription as String: type.rawValue,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: true
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound {
+            return nil
+        }
+        guard status == errSecSuccess, let attrs = result as? [String: Any] else {
+            throw KeychainError.operationFailed(status, "find")
+        }
+
+        guard attrs[kSecAttrComment as String] as? String == Self.oauthComment,
+              let host = attrs[kSecAttrServer as String] as? String,
+              let username = attrs[kSecAttrAccount as String] as? String,
+              let data = attrs[kSecValueData as String] as? Data else {
+            return nil
+        }
+
+        let port = attrs[kSecAttrPort as String] as? Int ?? 993
+        let oauth = try Self.decode(data)
+        return (FullCredential(id: id, host: host, port: port, username: username), oauth)
+    }
+
+    /// Replaces the stored OAuth credentials in place, keeping the item's other attributes.
+    public func updateOAuth(label: String, credentials: OAuthCredentials, type: CredentialType = .imap) throws {
+        keychainLock.lock()
+        defer { keychainLock.unlock() }
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassInternetPassword,
+            kSecAttrLabel as String: label,
+            kSecAttrDescription as String: type.rawValue,
+            kSecAttrComment as String: Self.oauthComment
+        ]
+        let update: [String: Any] = [kSecValueData as String: try Self.encode(credentials)]
+
+        let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+        if status == errSecItemNotFound {
+            throw KeychainError.notFoundLabel(label)
+        }
+        guard status == errSecSuccess else {
+            throw KeychainError.operationFailed(status, "update")
+        }
+    }
+
+    private static func encode(_ credentials: OAuthCredentials) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return try encoder.encode(credentials)
+    }
+
+    private static func decode(_ data: Data) throws -> OAuthCredentials {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(OAuthCredentials.self, from: data)
+    }
+
     /// Retrieves a full credential by server ID label, including password.
+    /// OAuth items are not returned here; use `oauthCredentials(forLabel:)`.
     public func fullCredentials(forLabel id: String, type: CredentialType = .imap) throws -> (credential: FullCredential, password: String)? {
         keychainLock.lock()
         defer { keychainLock.unlock() }
@@ -80,7 +180,8 @@ public final class KeychainCredentialStore: Sendable {
             throw KeychainError.operationFailed(status, "find")
         }
 
-        guard let host = attrs[kSecAttrServer as String] as? String,
+        guard attrs[kSecAttrComment as String] as? String != Self.oauthComment,
+              let host = attrs[kSecAttrServer as String] as? String,
               let username = attrs[kSecAttrAccount as String] as? String,
               let passwordData = attrs[kSecValueData as String] as? Data,
               let password = String(data: passwordData, encoding: .utf8) else {
@@ -189,6 +290,28 @@ public final class KeychainCredentialStore: Sendable {
         case .smtp:
             // Note: Security framework only defines kSecAttrProtocolSMTP (no SMTPS variant)
             return kSecAttrProtocolSMTP
+        }
+    }
+}
+
+/// Keeps OAuth tokens in the login keychain next to the account's other settings.
+public struct KeychainOAuthCredentialStore: OAuthCredentialStoring {
+    public init() {}
+
+    public func load(_ key: OAuthCredentialKey) throws -> OAuthCredentials? {
+        try KeychainCredentialStore().oauthCredentials(forLabel: key.label, type: key.service.credentialType)?.oauth
+    }
+
+    public func save(_ credentials: OAuthCredentials, for key: OAuthCredentialKey) throws {
+        try KeychainCredentialStore().updateOAuth(label: key.label, credentials: credentials, type: key.service.credentialType)
+    }
+}
+
+extension OAuthCredentialKey.Service {
+    var credentialType: KeychainCredentialStore.CredentialType {
+        switch self {
+        case .imap: return .imap
+        case .smtp: return .smtp
         }
     }
 }

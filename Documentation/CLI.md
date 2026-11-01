@@ -190,6 +190,31 @@ post credential set --server work --host imap.company.com --port 993 --username 
 post credential set --server work --host imap.company.com --port 993 --username you@company.com --password "secret"
 ```
 
+#### `post credential add-oauth` — Sign in with OAuth 2.0 (Gmail)
+
+Gmail and other providers are retiring password IMAP/SMTP access. Post authenticates with XOAUTH2 for both protocols and keeps the tokens in the login Keychain, refreshing the access token automatically shortly before it expires.
+
+Post ships no OAuth client, so you bring your own:
+
+1. In the [Google Cloud console](https://console.cloud.google.com/apis/credentials), create an OAuth client of type **Desktop app** (enable the Gmail API and configure the consent screen; add yourself as a test user).
+2. Authorize in the browser (opens the consent page; Post listens on a short-lived `127.0.0.1` port for the redirect, using PKCE S256 and a `state` check):
+
+```bash
+post credential add-oauth --server gmail --email you@gmail.com \
+  --client-id YOUR_CLIENT_ID.apps.googleusercontent.com --client-secret YOUR_SECRET
+```
+
+Defaults are Gmail (`imap.gmail.com:993`, `smtp.gmail.com:465`, scope `https://mail.google.com/`); override with `--host`, `--port`, `--smtp-host`, `--smtp-port`, `--scope`, `--authorization-endpoint`, `--token-endpoint`. Use `--no-browser` to just print the URL.
+
+To import tokens you already have (CI, headless machines) instead of opening a browser:
+
+```bash
+post credential add-oauth --server gmail --email you@gmail.com \
+  --client-id YOUR_CLIENT_ID --client-secret YOUR_SECRET --refresh-token REFRESH_TOKEN
+```
+
+If the provider revokes the grant, commands fail with a message asking you to run `add-oauth` again. `post credential delete --server gmail` removes the account. `post send`/`sendDraft` use the same authorization for SMTP.
+
 #### `post credential list` — List stored credentials
 
 ```bash

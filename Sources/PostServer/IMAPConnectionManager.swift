@@ -13,9 +13,24 @@ public actor IMAPConnectionManager {
     /// In-flight connection tasks so concurrent callers share a single attempt.
     private var pendingConnections: [String: Task<IMAPServer, Error>] = [:]
     private let logger = Logger(label: "com.cocoanetics.Post.IMAPConnectionManager")
+    private let tokenService: OAuthTokenService
 
-    public init(configuration: PostConfiguration) {
+    public init(configuration: PostConfiguration, tokenService: OAuthTokenService? = nil) {
         self.configuration = configuration
+        if let tokenService {
+            self.tokenService = tokenService
+        } else {
+            #if canImport(Security)
+            self.tokenService = OAuthTokenService(store: KeychainOAuthCredentialStore())
+            #else
+            self.tokenService = OAuthTokenService(store: UnavailableOAuthCredentialStore())
+            #endif
+        }
+    }
+
+    /// A current access token for an OAuth account, refreshed first when it is about to expire.
+    public func accessToken(for key: OAuthCredentialKey) async throws -> String {
+        try await tokenService.accessToken(for: key)
     }
 
     public func serverInfos() -> [ServerInfo] {
@@ -68,18 +83,38 @@ public actor IMAPConnectionManager {
         // Fall back to keychain
         #if canImport(Security)
         let store = KeychainCredentialStore()
-        guard let (cred, password) = try? store.fullCredentials(forLabel: serverId, type: .smtp) else {
-            throw PostConfigurationError.noSMTPCredentials(serverId)
+        let smtpKey = OAuthCredentialKey(label: serverId, service: .smtp)
+        if let entry = try? store.oauthCredentials(forLabel: serverId, type: .smtp) {
+            return PostConfiguration.ResolvedCredentials(
+                host: entry.credential.host,
+                port: entry.credential.port,
+                username: entry.oauth.email,
+                password: "",
+                oauth: smtpKey
+            )
         }
-        return PostConfiguration.ResolvedCredentials(
-            host: cred.host,
-            port: cred.port,
-            username: cred.username,
-            password: password
-        )
-        #else
-        throw PostConfigurationError.noSMTPCredentials(serverId)
+        // One OAuth authorization covers sending too, via the SMTP host stored with it.
+        // It outranks a retained SMTP password, which an account migrating to OAuth still has.
+        if let entry = try? store.oauthCredentials(forLabel: serverId, type: .imap),
+           let smtpHost = entry.oauth.smtpHost {
+            return PostConfiguration.ResolvedCredentials(
+                host: smtpHost,
+                port: entry.oauth.smtpPort ?? 465,
+                username: entry.oauth.email,
+                password: "",
+                oauth: OAuthCredentialKey(label: serverId, service: .imap)
+            )
+        }
+        if let (cred, password) = try? store.fullCredentials(forLabel: serverId, type: .smtp) {
+            return PostConfiguration.ResolvedCredentials(
+                host: cred.host,
+                port: cred.port,
+                username: cred.username,
+                password: password
+            )
+        }
         #endif
+        throw PostConfigurationError.noSMTPCredentials(serverId)
     }
 
     /// Returns a cached primary IMAPServer instance for the given serverId.
@@ -110,9 +145,20 @@ public actor IMAPConnectionManager {
         let server = IMAPServer(host: resolved.host, port: resolved.port)
 
         // Wrap in a Task so concurrent callers can share the same attempt
+        let tokenService = self.tokenService
         let task = Task {
             try await server.connect()
-            try await server.login(username: resolved.username, password: resolved.password)
+            switch resolved.authentication {
+            case .password(let password):
+                try await server.login(username: resolved.username, password: password)
+            case .xoauth2(let key):
+                let token = try await tokenService.accessToken(for: key)
+                try await server.authenticateXOAUTH2(email: resolved.username, accessToken: token)
+                // Automatic re-authentication inside SwiftMail must not replay this token once it expires.
+                await server.setXOAUTH2AccessTokenProvider(email: resolved.username) {
+                    try await tokenService.accessToken(for: key)
+                }
+            }
             return server
         }
 

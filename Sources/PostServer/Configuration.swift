@@ -47,12 +47,29 @@ public struct PostConfiguration: Codable, Sendable {
     public let port: Int
     public let username: String
     public let password: String
+    /// Set when the account authenticates with an OAuth token; `password` is empty then.
+    public let oauth: OAuthCredentialKey?
 
-    public init(host: String, port: Int, username: String, password: String) {
+    public init(
+      host: String, port: Int, username: String, password: String,
+      oauth: OAuthCredentialKey? = nil
+    ) {
       self.host = host
       self.port = port
       self.username = username
       self.password = password
+      self.oauth = oauth
+    }
+
+    public enum Authentication: Sendable, Equatable {
+      case password(String)
+      case xoauth2(OAuthCredentialKey)
+    }
+
+    /// How to authenticate: XOAUTH2 for OAuth accounts, a password login otherwise.
+    public var authentication: Authentication {
+      if let oauth { return .xoauth2(oauth) }
+      return .password(password)
     }
   }
 
@@ -144,6 +161,15 @@ public struct PostConfiguration: Codable, Sendable {
 
     #if canImport(Security)
       let store = KeychainCredentialStore()
+      if let entry = try store.oauthCredentials(forLabel: id) {
+        return ResolvedCredentials(
+          host: entry.credential.host,
+          port: entry.credential.port,
+          username: entry.oauth.email,
+          password: "",
+          oauth: OAuthCredentialKey(label: id, service: .imap)
+        )
+      }
       if let keychainEntry = try store.fullCredentials(forLabel: id) {
         return ResolvedCredentials(
           host: keychainEntry.credential.host,
