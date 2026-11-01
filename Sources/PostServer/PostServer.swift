@@ -1228,7 +1228,13 @@ public actor PostServer {
         
         // Connect and authenticate with SMTP
         try await smtp.connect()
-        try await smtp.login(username: credentials.username, password: credentials.password)
+        switch credentials.authentication {
+        case .password(let password):
+            try await smtp.login(username: credentials.username, password: password)
+        case .xoauth2(let key):
+            let token = try await connectionManager.accessToken(for: key)
+            try await smtp.authenticateXOAUTH2(email: credentials.username, accessToken: token)
+        }
         
         // Send the draft via SwiftMail's sendDraft orchestrator
         _ = try await withServer(serverId: serverId) { server in
