@@ -1,5 +1,10 @@
-import Network
 import XCTest
+#if canImport(Network)
+import Network
+#endif
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 @testable import PostServer
 
 /// In-memory store and fake token endpoint: no keychain, network or real accounts.

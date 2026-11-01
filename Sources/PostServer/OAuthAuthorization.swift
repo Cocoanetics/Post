@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 #if canImport(CryptoKit) && canImport(Network)
 import CryptoKit
 import Network

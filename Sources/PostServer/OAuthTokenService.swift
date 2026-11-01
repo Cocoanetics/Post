@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Persistence for OAuth credentials; the Keychain in production, memory in tests.
 public protocol OAuthCredentialStoring: Sendable {
@@ -14,6 +17,45 @@ struct OAuthTokenResponse: Equatable {
     let accessToken: String
     let refreshToken: String?
     let expiresIn: TimeInterval?
+}
+
+/// The JSON a token endpoint answers with; `expires_in` is a number, or a string from some providers.
+private struct TokenPayload: Decodable {
+    let accessToken: String?
+    let refreshToken: String?
+    let expiresIn: TimeInterval?
+    let error: String?
+    let errorDescription: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case accessToken = "access_token"
+        case refreshToken = "refresh_token"
+        case expiresIn = "expires_in"
+        case error
+        case errorDescription = "error_description"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accessToken = try? container.decode(String.self, forKey: .accessToken)
+        refreshToken = try? container.decode(String.self, forKey: .refreshToken)
+        error = try? container.decode(String.self, forKey: .error)
+        errorDescription = try? container.decode(String.self, forKey: .errorDescription)
+        if let number = try? container.decode(Double.self, forKey: .expiresIn) {
+            expiresIn = number
+        } else if let text = try? container.decode(String.self, forKey: .expiresIn) {
+            expiresIn = Double(text)
+        } else {
+            expiresIn = nil
+        }
+    }
+}
+
+/// Used where there is no Keychain: every account then needs to be authorized again.
+public struct UnavailableOAuthCredentialStore: OAuthCredentialStoring {
+    public init() {}
+    public func load(_ key: OAuthCredentialKey) throws -> OAuthCredentials? { nil }
+    public func save(_ credentials: OAuthCredentials, for key: OAuthCredentialKey) throws {}
 }
 
 /// Talks to an OAuth token endpoint.
@@ -49,11 +91,11 @@ public enum OAuthTokenEndpoint {
         _ request: URLRequest, transport: OAuthHTTPTransport, label: String?
     ) async throws -> OAuthTokenResponse {
         let (data, http) = try await transport(request)
-        let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        let object = try? JSONDecoder().decode(TokenPayload.self, from: data)
 
         guard (200..<300).contains(http.statusCode) else {
-            let code = object?["error"] as? String
-            let description = object?["error_description"] as? String
+            let code = object?.error
+            let description = object?.errorDescription
             let reason = [code, description].compactMap { $0 }.joined(separator: ": ")
             if code == "invalid_grant", let label {
                 throw OAuthError.reauthorizationRequired(label: label, reason: reason)
@@ -61,15 +103,13 @@ public enum OAuthTokenEndpoint {
             throw OAuthError.tokenRequestFailed(reason.isEmpty ? "HTTP \(http.statusCode)" : reason)
         }
 
-        guard let accessToken = object?["access_token"] as? String, !accessToken.isEmpty else {
+        guard let accessToken = object?.accessToken, !accessToken.isEmpty else {
             throw OAuthError.invalidTokenResponse
         }
-        let expiresIn = (object?["expires_in"] as? NSNumber)?.doubleValue
-            ?? (object?["expires_in"] as? String).flatMap(Double.init)
         return OAuthTokenResponse(
             accessToken: accessToken,
-            refreshToken: object?["refresh_token"] as? String,
-            expiresIn: expiresIn
+            refreshToken: object?.refreshToken,
+            expiresIn: object?.expiresIn
         )
     }
 }

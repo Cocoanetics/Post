@@ -15,17 +15,18 @@ public actor IMAPConnectionManager {
     private let logger = Logger(label: "com.cocoanetics.Post.IMAPConnectionManager")
     private let tokenService: OAuthTokenService
 
-    #if canImport(Security)
-    public init(configuration: PostConfiguration, tokenService: OAuthTokenService = OAuthTokenService(store: KeychainOAuthCredentialStore())) {
+    public init(configuration: PostConfiguration, tokenService: OAuthTokenService? = nil) {
         self.configuration = configuration
-        self.tokenService = tokenService
+        if let tokenService {
+            self.tokenService = tokenService
+        } else {
+            #if canImport(Security)
+            self.tokenService = OAuthTokenService(store: KeychainOAuthCredentialStore())
+            #else
+            self.tokenService = OAuthTokenService(store: UnavailableOAuthCredentialStore())
+            #endif
+        }
     }
-    #else
-    public init(configuration: PostConfiguration, tokenService: OAuthTokenService) {
-        self.configuration = configuration
-        self.tokenService = tokenService
-    }
-    #endif
 
     /// A current access token for an OAuth account, refreshed first when it is about to expire.
     public func accessToken(for key: OAuthCredentialKey) async throws -> String {
