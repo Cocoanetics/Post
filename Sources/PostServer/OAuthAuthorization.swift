@@ -155,46 +155,60 @@ final class LoopbackCallbackListener: @unchecked Sendable {
 
     private func handle(_ connection: NWConnection) {
         connection.start(queue: queue)
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, _, _ in
+        receiveRequest(on: connection, buffer: Data())
+    }
+
+    /// Reads until the request line is complete: TCP may split it across reads.
+    private func receiveRequest(on connection: NWConnection, buffer: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, isComplete, error in
             guard let self else { return connection.cancel() }
-            let request = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-            let line = request.components(separatedBy: "\r\n").first ?? ""
-            let parts = line.split(separator: " ")
-            let outcome: OAuthCallbackRequest
-            if parts.count >= 2, parts[0] == "GET" {
-                outcome = OAuthCallbackRequest.evaluate(target: String(parts[1]), expectedState: self.expectedState)
-            } else {
-                outcome = .unrelated
+            var buffer = buffer
+            if let data { buffer.append(data) }
+            let hasLine = buffer.range(of: Data("\r\n".utf8)) != nil
+            if !hasLine && buffer.count < 8192 && !isComplete && error == nil {
+                return self.receiveRequest(on: connection, buffer: buffer)
             }
+            self.respond(to: String(decoding: buffer, as: UTF8.self), on: connection)
+        }
+    }
 
-            let status: String
-            let message: String
-            switch outcome {
-            case .code:
-                status = "200 OK"
-                message = "Post is authorized. You can close this tab."
-            case .denied:
-                status = "200 OK"
-                message = "Authorization was not granted. You can close this tab."
-            case .rejected:
-                status = "400 Bad Request"
-                message = "Invalid authorization response."
-            case .unrelated:
-                status = "404 Not Found"
-                message = "Not found."
-            }
-            let body = "<html><body><p>\(message)</p></body></html>"
-            let response = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\n"
-                + "Content-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
-            connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in
-                connection.cancel()
-            })
+    private func respond(to request: String, on connection: NWConnection) {
+        let line = request.components(separatedBy: "\r\n").first ?? ""
+        let parts = line.split(separator: " ")
+        let outcome: OAuthCallbackRequest
+        if parts.count >= 2, parts[0] == "GET" {
+            outcome = OAuthCallbackRequest.evaluate(target: String(parts[1]), expectedState: self.expectedState)
+        } else {
+            outcome = .unrelated
+        }
 
-            switch outcome {
-            case .code(let code): self.finish(.success(code))
-            case .denied(let reason): self.finish(.failure(OAuthError.authorizationDenied(reason)))
-            case .rejected, .unrelated: break
-            }
+        let status: String
+        let message: String
+        switch outcome {
+        case .code:
+            status = "200 OK"
+            message = "Post is authorized. You can close this tab."
+        case .denied:
+            status = "200 OK"
+            message = "Authorization was not granted. You can close this tab."
+        case .rejected:
+            status = "400 Bad Request"
+            message = "Invalid authorization response."
+        case .unrelated:
+            status = "404 Not Found"
+            message = "Not found."
+        }
+        let body = "<html><body><p>\(message)</p></body></html>"
+        let response = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\n"
+            + "Content-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+        connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in
+            connection.cancel()
+        })
+
+        switch outcome {
+        case .code(let code): self.finish(.success(code))
+        case .denied(let reason): self.finish(.failure(OAuthError.authorizationDenied(reason)))
+        case .rejected, .unrelated: break
         }
     }
 }

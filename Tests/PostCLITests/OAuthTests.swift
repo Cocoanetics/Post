@@ -1,3 +1,4 @@
+import Network
 import XCTest
 @testable import PostServer
 
@@ -203,6 +204,19 @@ final class OAuthAuthorizationTests: XCTestCase {
         XCTAssertEqual(code, "real-code")
     }
 
+    func testListenerBuffersRequestSplitAcrossReads() async throws {
+        let listener = LoopbackCallbackListener(expectedState: "good", timeout: 20)
+        let port = try await listener.start()
+        let connection = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+        connection.start(queue: .global())
+        connection.send(content: Data("GET /callback?code=split-code&sta".utf8), completion: .contentProcessed { _ in })
+        try await Task.sleep(nanoseconds: 300_000_000)
+        connection.send(content: Data("te=good HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".utf8), completion: .contentProcessed { _ in })
+        let code = try await listener.waitForCode()
+        connection.cancel()
+        XCTAssertEqual(code, "split-code")
+    }
+
     func testListenerTimesOut() async throws {
         let listener = LoopbackCallbackListener(expectedState: "s", timeout: 0.3)
         _ = try await listener.start()
@@ -273,6 +287,25 @@ final class KeychainOAuthCompatibilityTests: XCTestCase {
         try store.store(id: id, host: "imap.example.com", port: 993, username: "user", password: "pw")
         XCTAssertNil(try store.oauthCredentials(forLabel: id))
         XCTAssertEqual(try store.fullCredentials(forLabel: id)?.password, "pw")
+    }
+
+    func testOAuthOutranksRetainedSMTPPassword() async throws {
+        let store = KeychainCredentialStore()
+        let id = "post-test-\(UUID().uuidString)"
+        addTeardownBlock {
+            try? store.delete(label: id)
+            try? store.delete(label: id, type: .smtp)
+        }
+        try store.store(id: id, host: "smtp.example.com", port: 465, username: "user", password: "old", type: .smtp)
+        let oauth = OAuthCredentials(
+            email: "user@example.com", clientID: "cid", refreshToken: "r",
+            tokenEndpoint: URL(string: "https://oauth.example.com/token")!, smtpHost: "smtp.example.com", smtpPort: 465)
+        try store.storeOAuth(id: id, host: "imap.example.com", port: 993, credentials: oauth)
+
+        let configuration = PostConfiguration(servers: [id: .init()], httpPort: nil)
+        let manager = IMAPConnectionManager(configuration: configuration)
+        let resolved = try await manager.resolveSMTPCredentials(forServer: id)
+        XCTAssertEqual(resolved.authentication, .xoauth2(OAuthCredentialKey(label: id, service: .imap)))
     }
 }
 #endif

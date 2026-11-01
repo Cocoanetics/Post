@@ -92,15 +92,8 @@ public actor IMAPConnectionManager {
                 oauth: smtpKey
             )
         }
-        if let (cred, password) = try? store.fullCredentials(forLabel: serverId, type: .smtp) {
-            return PostConfiguration.ResolvedCredentials(
-                host: cred.host,
-                port: cred.port,
-                username: cred.username,
-                password: password
-            )
-        }
         // One OAuth authorization covers sending too, via the SMTP host stored with it.
+        // It outranks a retained SMTP password, which an account migrating to OAuth still has.
         if let entry = try? store.oauthCredentials(forLabel: serverId, type: .imap),
            let smtpHost = entry.oauth.smtpHost {
             return PostConfiguration.ResolvedCredentials(
@@ -109,6 +102,14 @@ public actor IMAPConnectionManager {
                 username: entry.oauth.email,
                 password: "",
                 oauth: OAuthCredentialKey(label: serverId, service: .imap)
+            )
+        }
+        if let (cred, password) = try? store.fullCredentials(forLabel: serverId, type: .smtp) {
+            return PostConfiguration.ResolvedCredentials(
+                host: cred.host,
+                port: cred.port,
+                username: cred.username,
+                password: password
             )
         }
         #endif
