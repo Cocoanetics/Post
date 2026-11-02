@@ -94,7 +94,9 @@ Combine IDLE with handler scripts to build a "mail room" that automatically sort
 
 ### Requirements
 - macOS 15.0+
-- Swift 6.3+ (Xcode 26.4+)
+- Swift 6.4+ (Xcode 27.1+)
+
+CI builds on macOS with Swift 6.4 and on Linux with the pinned `swift:6.4.2-jammy` image.
 
 ### Build & Run
 
