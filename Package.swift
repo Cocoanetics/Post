@@ -1,4 +1,4 @@
-// swift-tools-version: 6.3
+// swift-tools-version: 6.4
 import PackageDescription
 
 let package = Package(
@@ -72,8 +72,8 @@ let package = Package(
         .package(url: "https://github.com/Cocoanetics/SwiftMail", revision: "88c45cbd31b347b373f7c87e197be63eb95efbc2"),
         // 2.2.0 replaced the revision-pinned ZIPFoundation with tagged
         // swift-archive, so SwiftText is a normal version requirement again.
-        // It declares swift-tools-version 6.3, which sets Post's toolchain
-        // floor. 2.3.0 subsets CFF fonts when embedding them, which `post pdf`
+        // It declares swift-tools-version 6.3, below Post's own 6.4 tools
+        // version, so it no longer sets the toolchain floor. 2.3.0 subsets CFF fonts when embedding them, which `post pdf`
         // needs: before it, one line of CJK text embedded the whole 23 MB
         // Hiragino collection. Default traits on purpose: traits: ["HTML"]
         // would prune swift-archive, but SwiftPM then fails a fresh
