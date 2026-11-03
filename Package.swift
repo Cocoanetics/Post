@@ -69,17 +69,24 @@ let package = Package(
         // 1.16.0 also keeps the backslashes in attachment names that Outlook
         // writes unescaped (#254): that mail's files are named after their
         // Windows paths, such as zpo-berufung\reference\akt.md.
-        .package(url: "https://github.com/Cocoanetics/SwiftMail", revision: "88c45cbd31b347b373f7c87e197be63eb95efbc2"),
+        // The pin has since moved to SwiftMail main past 1.16.0, still on the same
+        // swift-nio-imap revision: RFC 2231 attachment names (#272, #276), legacy
+        // Japanese and GBK charsets (#265, #267, #278), and fetchRawMessage's
+        // timeoutSeconds, which MailboxCommandRunning mirrors.
+        .package(url: "https://github.com/Cocoanetics/SwiftMail", revision: "d16534fbd609feab8c467f4bbd2999c0582278f9"),
         // 2.2.0 replaced the revision-pinned ZIPFoundation with tagged
         // swift-archive, so SwiftText is a normal version requirement again.
         // It declares swift-tools-version 6.3, below Post's own 6.4 tools
-        // version, so it no longer sets the toolchain floor. 2.3.0 subsets CFF fonts when embedding them, which `post pdf`
-        // needs: before it, one line of CJK text embedded the whole 23 MB
-        // Hiragino collection. Default traits on purpose: traits: ["HTML"]
-        // would prune swift-archive, but SwiftPM then fails a fresh
-        // `swift package update` with "exhausted attempts to resolve …
-        // swift-archive".
-        .package(url: "https://github.com/Cocoanetics/SwiftText", .upToNextMajor(from: "2.3.0")),
+        // version, so it no longer sets the toolchain floor. 2.3.0 subsets CFF
+        // fonts when embedding them, which `post pdf` needs: before it, one line
+        // of CJK text embedded the whole 23 MB Hiragino collection. 2.5.0 renders
+        // HTML email as a browser shows it — remote and transparent images,
+        // presentational attributes, browser table sizing, CR LF line ends —
+        // which `post pdf` needs for receipts such as Google's. Default traits on
+        // purpose: traits: ["HTML"] would prune swift-archive, but SwiftPM then
+        // fails a fresh `swift package update` with "exhausted attempts to
+        // resolve … swift-archive".
+        .package(url: "https://github.com/Cocoanetics/SwiftText", .upToNextMajor(from: "2.5.0")),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
         // 1.11.0 introduced LogEvent, which both OSLogHandlers implement.
         .package(url: "https://github.com/apple/swift-log.git", from: "1.11.0"),

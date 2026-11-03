@@ -359,7 +359,7 @@ public actor PostServer {
             var results: [RawMessage] = []
 
             for uid in set.toArray() {
-                let data = try await connection.fetchRawMessage(identifier: uid)
+                let data = try await connection.fetchRawMessage(identifier: uid, timeoutSeconds: nil)
                 results.append(RawMessage(uid: Int(uid.value), rawData: data))
             }
 
@@ -857,7 +857,7 @@ public actor PostServer {
         return try await withExtraConnection(serverId: serverId) { connection in
             _ = try await connection.selectMailbox(mailbox)
             let uid = UID(UInt32(uid))
-            return try await connection.fetchRawMessage(identifier: uid)
+            return try await connection.fetchRawMessage(identifier: uid, timeoutSeconds: nil)
         }
     }
 
