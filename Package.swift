@@ -80,9 +80,10 @@ let package = Package(
         // version, so it no longer sets the toolchain floor. 2.3.0 subsets CFF
         // fonts when embedding them, which `post pdf` needs: before it, one line
         // of CJK text embedded the whole 23 MB Hiragino collection. 2.5.0 renders
-        // HTML email as a browser shows it — remote and transparent images,
-        // presentational attributes, browser table sizing, CR LF line ends —
-        // which `post pdf` needs for receipts such as Google's. Default traits on
+        // HTML email as a browser shows it — transparent images, presentational
+        // attributes, browser table sizing, CR LF line ends. Its remote image
+        // fetching is switched off in HTMLToPDF, since mail HTML is untrusted.
+        // Default traits on
         // purpose: traits: ["HTML"] would prune swift-archive, but SwiftPM then
         // fails a fresh `swift package update` with "exhausted attempts to
         // resolve … swift-archive".
