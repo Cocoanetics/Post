@@ -32,7 +32,8 @@ protocol MailboxCommandRunning: Actor {
         headerFields: [String]?
     ) async throws -> [SwiftMail.MessageInfo]
 
-    func fetchRawMessage<T: SwiftMail.MessageIdentifier>(identifier: T) async throws -> Data
+    /// `timeoutSeconds: nil` keeps SwiftMail's default.
+    func fetchRawMessage<T: SwiftMail.MessageIdentifier>(identifier: T, timeoutSeconds: Int?) async throws -> Data
 }
 
 extension SwiftMail.IMAPServer: MailboxCommandRunning {}
