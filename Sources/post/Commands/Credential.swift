@@ -31,7 +31,8 @@ enum CredentialProtocol: String, ExpressibleByArgument, CaseIterable {
     /// `smtp.credentials`, then the IMAP host and username; an IMAP port is never used for SMTP.
     static func fallbackCredentials(
         for credentialProtocol: CredentialProtocol,
-        server: PostConfiguration.ServerConfiguration?
+        server: PostConfiguration.ServerConfiguration?,
+        keychainIMAP: (host: String, username: String)? = nil
     ) -> (host: String?, port: Int?, username: String?, password: String?, security: ConnectionSecurity?) {
         let imap = server?.credentials
         switch credentialProtocol {
@@ -39,7 +40,8 @@ enum CredentialProtocol: String, ExpressibleByArgument, CaseIterable {
             return (imap?.host, imap?.port, imap?.username, imap?.password, imap?.security)
         case .smtp:
             let smtp = server?.smtp?.credentials
-            return (smtp?.host ?? imap?.host, smtp?.port, smtp?.username ?? imap?.username, smtp?.password, smtp?.security)
+            return (smtp?.host ?? keychainIMAP?.host ?? imap?.host, smtp?.port,
+                    smtp?.username ?? keychainIMAP?.username ?? imap?.username, smtp?.password, smtp?.security)
         }
     }
 }
@@ -91,8 +93,18 @@ extension PostCLI {
                     throw PostConfigurationError.unknownServer(server)
                 }
 
+                // An IMAP login kept in the Keychain is the first fallback for the SMTP host and username.
+                var keychainIMAP: (host: String, username: String)?
+                if credentialProtocol == .smtp {
+                    let keychain = KeychainCredentialStore()
+                    if let entry = try? keychain.fullCredentials(forLabel: server) {
+                        keychainIMAP = (entry.credential.host, entry.credential.username)
+                    } else if let entry = try? keychain.oauthCredentials(forLabel: server) {
+                        keychainIMAP = (entry.credential.host, entry.oauth.email)
+                    }
+                }
                 let fallbackCredentials = CredentialProtocol.fallbackCredentials(
-                    for: credentialProtocol, server: config?.server(withID: server))
+                    for: credentialProtocol, server: config?.server(withID: server), keychainIMAP: keychainIMAP)
                 let resolvedHost = try host.resolvedRequiredValue(fallback: fallbackCredentials.host, prompt: "Host")
 
                 let resolvedPort = try port.resolvedPort(

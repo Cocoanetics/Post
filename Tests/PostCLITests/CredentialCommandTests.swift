@@ -58,6 +58,14 @@ final class CredentialCommandTests: XCTestCase {
         XCTAssertEqual(imapFallback.port, 993)
     }
 
+    func testSMTPFallbackUsesKeychainIMAPLogin() {
+        let fallback = CredentialProtocol.fallbackCredentials(
+            for: .smtp, server: .init(), keychainIMAP: (host: "imap.kc", username: "kc-user"))
+        XCTAssertEqual(fallback.host, "imap.kc")
+        XCTAssertEqual(fallback.username, "kc-user")
+        XCTAssertNil(fallback.port)
+    }
+
     func testInferredSecurity() {
         XCTAssertEqual(ConnectionSecurity.inferred(port: 993, isSMTP: false), .tls)
         XCTAssertEqual(ConnectionSecurity.inferred(port: 143, isSMTP: false), .starttls)
