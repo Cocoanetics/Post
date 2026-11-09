@@ -145,7 +145,7 @@ This is useful for:
 
 Credentials are resolved in this order:
 
-1. **macOS Keychain** (preferred) — stored in `~/.post.keychain-db`
+1. **macOS Keychain** (preferred) — stored in the login Keychain
 2. **Inline credentials** in `~/.post.json`
 3. Error if neither is found
 
@@ -158,14 +158,27 @@ post credential set --server work \
   --port 993 \
   --username you@company.com
 
-# List stored credentials
+# Store a separate SMTP login for sending (default port 465)
+post credential set --server work --protocol smtp --host smtp.company.com
+
+# Implicit TLS on a non-standard port
+post credential set --server work --protocol smtp --host smtp.company.com --port 2465 --security tls
+
+# List stored credentials (both kinds; filter with --protocol imap|smtp)
 post credential list
+
+# Remove only the SMTP credentials
+post credential delete --server work --protocol smtp
 
 # Remove credentials
 post credential delete --server work
 ```
 
-The password is prompted interactively (or pass `--password` for scripted setup). Credentials are stored in a dedicated Keychain file, separate from the system login Keychain.
+`--protocol imap|smtp` (default `imap`) selects which login is stored. For SMTP, missing host, port and username fall back to the server's `smtp.credentials` in `~/.post.json`, then to its IMAP host and username; you are prompted only for what is still missing.
+
+`--security tls|starttls` is stored with the credential. When omitted, the mode follows the port: IMAP 993 and SMTP 465 use implicit TLS, anything else uses STARTTLS.
+
+The password is prompted interactively (or pass `--password` for scripted setup). Credentials are stored in the login Keychain.
 
 ### Inline credentials
 
@@ -179,12 +192,15 @@ For non-Mac environments or testing, credentials can be specified directly in th
         "host": "imap.example.com",
         "port": 993,
         "username": "user@example.com",
-        "password": "secret"
+        "password": "secret",
+        "security": "tls"
       }
     }
   }
 }
 ```
+
+`security` is optional (`"tls"` or `"starttls"`) and is accepted in `credentials` and `smtp.credentials`; without it the mode follows the port.
 
 ⚠️ Inline passwords are stored in plain text. Use Keychain credentials for production setups.
 
@@ -277,4 +293,3 @@ tail -f /tmp/postd.log
 |------|-------------|
 | `~/.post.json` | Configuration file |
 | `~/.post.pid` | PID file (created when daemon is running) |
-| `~/.post.keychain-db` | Dedicated Keychain for IMAP credentials |

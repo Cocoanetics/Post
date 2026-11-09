@@ -76,7 +76,8 @@ public actor IMAPConnectionManager {
                 host: creds.host,
                 port: creds.port,
                 username: creds.username,
-                password: creds.password
+                password: creds.password,
+                security: creds.security
             )
         }
         
@@ -110,7 +111,8 @@ public actor IMAPConnectionManager {
                 host: cred.host,
                 port: cred.port,
                 username: cred.username,
-                password: password
+                password: password,
+                security: cred.security
             )
         }
         #endif
@@ -142,7 +144,11 @@ public actor IMAPConnectionManager {
 
         // Create the server and start connecting.
         // The await points in connect()/login() release the actor for other callers.
-        let server = IMAPServer(host: resolved.host, port: resolved.port)
+        let server = IMAPServer(
+            host: resolved.host,
+            port: resolved.port,
+            transportSecurity: resolved.effectiveSecurity(isSMTP: false).transportSecurity
+        )
 
         // Wrap in a Task so concurrent callers can share the same attempt
         let tokenService = self.tokenService

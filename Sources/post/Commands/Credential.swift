@@ -2,32 +2,86 @@ import ArgumentParser
 import Foundation
 import PostServer
 
+extension ConnectionSecurity: ExpressibleByArgument {}
+
+/// Which login a Keychain credential is for.
+enum CredentialProtocol: String, ExpressibleByArgument, CaseIterable {
+    case imap
+    case smtp
+
+    var defaultPort: Int {
+        switch self {
+        case .imap: return 993
+        case .smtp: return 465
+        }
+    }
+
+    var label: String { rawValue.uppercased() }
+
+    #if canImport(Security)
+    var credentialType: KeychainCredentialStore.CredentialType {
+        switch self {
+        case .imap: return .imap
+        case .smtp: return .smtp
+        }
+    }
+    #endif
+
+    /// Host, port, username and password already known from the config. SMTP prefers
+    /// `smtp.credentials`, then the IMAP host and username; an IMAP port is never used for SMTP.
+    static func fallbackCredentials(
+        for credentialProtocol: CredentialProtocol,
+        server: PostConfiguration.ServerConfiguration?
+    ) -> (host: String?, port: Int?, username: String?, password: String?, security: ConnectionSecurity?) {
+        let imap = server?.credentials
+        switch credentialProtocol {
+        case .imap:
+            return (imap?.host, imap?.port, imap?.username, imap?.password, imap?.security)
+        case .smtp:
+            let smtp = server?.smtp?.credentials
+            return (smtp?.host ?? imap?.host, smtp?.port, smtp?.username ?? imap?.username, smtp?.password, smtp?.security)
+        }
+    }
+}
+
 extension PostCLI {
     struct Credential: ParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Manage IMAP credentials in the Keychain",
+            abstract: "Manage IMAP and SMTP credentials in the Keychain",
             subcommands: [Set.self, AddOAuth.self, Delete.self, List.self]
         )
 
         struct Set: ParsableCommand {
             static let configuration = CommandConfiguration(
                 commandName: "set",
-                abstract: "Store IMAP credentials in the Keychain"
+                abstract: "Store IMAP or SMTP credentials in the Keychain",
+                discussion: """
+                    --protocol selects which login this is (default imap). For smtp the default port is 465. \
+                    Missing values fall back to the server's smtp.credentials in ~/.post.json, then to its \
+                    IMAP host and username. --security tls|starttls is stored with the credential; when \
+                    omitted, the mode follows the port (IMAP 993 / SMTP 465 use TLS, otherwise STARTTLS).
+                    """
             )
 
             @Option(name: .long, help: "Server identifier")
             var server: String
 
-            @Option(name: .long, help: "IMAP host")
+            @Option(name: .customLong("protocol"), help: "Which login this is: imap or smtp [default: imap]")
+            var credentialProtocol: CredentialProtocol = .imap
+
+            @Option(name: .long, help: "Connection mode: tls or starttls [default: from the port]")
+            var security: ConnectionSecurity?
+
+            @Option(name: .long, help: "IMAP or SMTP host")
             var host: String?
 
-            @Option(name: .long, help: "IMAP port")
+            @Option(name: .long, help: "IMAP or SMTP port [default: 993 for imap, 465 for smtp]")
             var port: Int?
 
-            @Option(name: .long, help: "IMAP username")
+            @Option(name: .long, help: "IMAP or SMTP username")
             var username: String?
 
-            @Option(name: .long, help: "IMAP password")
+            @Option(name: .long, help: "IMAP or SMTP password")
             var password: String?
 
             func run() throws {
@@ -37,17 +91,19 @@ extension PostCLI {
                     throw PostConfigurationError.unknownServer(server)
                 }
 
-                let fallbackCredentials = config?.server(withID: server)?.credentials
-                let resolvedHost = try host.resolvedRequiredValue(fallback: fallbackCredentials?.host, prompt: "Host")
+                let fallbackCredentials = CredentialProtocol.fallbackCredentials(
+                    for: credentialProtocol, server: config?.server(withID: server))
+                let resolvedHost = try host.resolvedRequiredValue(fallback: fallbackCredentials.host, prompt: "Host")
 
-                let resolvedPort = try port.resolvedPort(fallback: fallbackCredentials?.port, prompt: "Port", defaultValue: 993)
+                let resolvedPort = try port.resolvedPort(
+                    fallback: fallbackCredentials.port, prompt: "Port", defaultValue: credentialProtocol.defaultPort)
 
-                let resolvedUsername = try username.resolvedRequiredValue(fallback: fallbackCredentials?.username, prompt: "Username")
+                let resolvedUsername = try username.resolvedRequiredValue(fallback: fallbackCredentials.username, prompt: "Username")
 
                 let resolvedPassword: String
                 if let explicitPassword = password?.trimmingCharacters(in: .whitespacesAndNewlines), !explicitPassword.isEmpty {
                     resolvedPassword = explicitPassword
-                } else if let fallbackPassword = fallbackCredentials?.password, !fallbackPassword.isEmpty {
+                } else if let fallbackPassword = fallbackCredentials.password, !fallbackPassword.isEmpty {
                     resolvedPassword = fallbackPassword
                 } else {
                     print("Password: ", terminator: "")
@@ -65,9 +121,11 @@ extension PostCLI {
                     host: resolvedHost,
                     port: resolvedPort,
                     username: resolvedUsername,
-                    password: resolvedPassword
+                    password: resolvedPassword,
+                    type: credentialProtocol.credentialType,
+                    security: security ?? fallbackCredentials.security
                 )
-                print("Credential stored for server '\(server)' in the login keychain.")
+                print("\(credentialProtocol.label) credential stored for server '\(server)' in the login keychain.")
                 #else
                 print("Keychain is not available on this platform.")
                 throw ExitCode.failure
@@ -206,17 +264,20 @@ extension PostCLI {
         struct Delete: ParsableCommand {
             static let configuration = CommandConfiguration(
                 commandName: "delete",
-                abstract: "Remove IMAP credentials from the Keychain"
+                abstract: "Remove IMAP or SMTP credentials from the Keychain"
             )
 
             @Option(name: .long, help: "Server identifier")
             var server: String
 
+            @Option(name: .customLong("protocol"), help: "Which login to remove: imap or smtp [default: imap]")
+            var credentialProtocol: CredentialProtocol = .imap
+
             func run() throws {
                 #if canImport(Security)
                 let store = KeychainCredentialStore()
-                try store.delete(label: server)
-                print("Credential deleted.")
+                try store.delete(label: server, type: credentialProtocol.credentialType)
+                print("\(credentialProtocol.label) credential deleted.")
                 #else
                 print("Keychain is not available on this platform.")
                 throw ExitCode.failure
@@ -227,27 +288,45 @@ extension PostCLI {
         struct List: ParsableCommand {
             static let configuration = CommandConfiguration(
                 commandName: "list",
-                abstract: "List stored IMAP credentials"
+                abstract: "List stored IMAP and SMTP credentials"
             )
+
+            @Option(name: .customLong("protocol"), help: "Only list this kind: imap or smtp [default: both]")
+            var credentialProtocol: CredentialProtocol?
 
             func run() throws {
                 #if canImport(Security)
                 let store = KeychainCredentialStore()
-                let credentials = try store.list()
+                let protocols = credentialProtocol.map { [$0] } ?? CredentialProtocol.allCases
+                let credentials = try protocols
+                    .flatMap { try store.list(type: $0.credentialType) }
+                    .sorted {
+                        let order = $0.id.localizedCaseInsensitiveCompare($1.id)
+                        return order == .orderedSame ? $0.type.rawValue < $1.type.rawValue : order == .orderedAscending
+                    }
 
                 if credentials.isEmpty {
                     print("No credentials stored.")
                     return
                 }
 
-                let idWidth = max("ID".count, credentials.map { $0.id.count }.max() ?? 0)
-                let userWidth = max("Username".count, credentials.map { $0.username.count }.max() ?? 0)
+                func protocolName(_ credential: KeychainCredentialStore.StoredCredential) -> String {
+                    credential.type == .smtp ? "smtp" : "imap"
+                }
+                func securityName(_ credential: KeychainCredentialStore.StoredCredential) -> String {
+                    credential.security?.rawValue ?? "auto"
+                }
 
-                print("\("ID".padded(to: idWidth))  \("Username".padded(to: userWidth))  Host")
-                print("\(String(repeating: "-", count: idWidth))  \(String(repeating: "-", count: userWidth))  \(String(repeating: "-", count: 4))")
+                let idWidth = max("ID".count, credentials.map { $0.id.count }.max() ?? 0)
+                let protocolWidth = max("Protocol".count, credentials.map { protocolName($0).count }.max() ?? 0)
+                let userWidth = max("Username".count, credentials.map { $0.username.count }.max() ?? 0)
+                let securityWidth = max("Security".count, credentials.map { securityName($0).count }.max() ?? 0)
+
+                print("\("ID".padded(to: idWidth))  \("Protocol".padded(to: protocolWidth))  \("Username".padded(to: userWidth))  \("Security".padded(to: securityWidth))  Host")
+                print([idWidth, protocolWidth, userWidth, securityWidth, 4].map { String(repeating: "-", count: $0) }.joined(separator: "  "))
 
                 for cred in credentials {
-                    print("\(cred.id.padded(to: idWidth))  \(cred.username.padded(to: userWidth))  \(cred.host):\(cred.port)")
+                    print("\(cred.id.padded(to: idWidth))  \(protocolName(cred).padded(to: protocolWidth))  \(cred.username.padded(to: userWidth))  \(securityName(cred).padded(to: securityWidth))  \(cred.host):\(cred.port)")
                 }
                 #else
                 print("Keychain is not available on this platform.")
