@@ -30,7 +30,7 @@ public final class KeychainCredentialStore: Sendable {
     // MARK: - Public API
 
     /// Stores or updates credentials for a server ID.
-    public func store(id: String, host: String, port: Int, username: String, password: String, type: CredentialType = .imap) throws {
+    public func store(id: String, host: String, port: Int, username: String, password: String, type: CredentialType = .imap, security: ConnectionSecurity? = nil) throws {
         keychainLock.lock()
         defer { keychainLock.unlock() }
 
@@ -39,7 +39,7 @@ public final class KeychainCredentialStore: Sendable {
         // Delete existing if present, then re-add
         try? delete(label: id, type: type)
 
-        let attrs: [String: Any] = [
+        var attrs: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
             kSecAttrServer as String: host,
             kSecAttrPort as String: port,
@@ -49,6 +49,9 @@ public final class KeychainCredentialStore: Sendable {
             kSecAttrDescription as String: type.rawValue,
             kSecValueData as String: password.data(using: .utf8) ?? Data()
         ]
+        if let security {
+            attrs[kSecAttrType as String] = Self.typeCode(for: security)
+        }
 
         let status = SecItemAdd(attrs as CFDictionary, nil)
         guard status == errSecSuccess else {
@@ -189,7 +192,7 @@ public final class KeychainCredentialStore: Sendable {
         }
 
         let port = attrs[kSecAttrPort as String] as? Int ?? 993
-        let credential = FullCredential(id: id, host: host, port: port, username: username)
+        let credential = FullCredential(id: id, host: host, port: port, username: username, security: Self.security(from: attrs))
         return (credential, password)
     }
 
@@ -242,7 +245,7 @@ public final class KeychainCredentialStore: Sendable {
             }
             let label = attrs[kSecAttrLabel as String] as? String ?? ""
             let port = attrs[kSecAttrPort as String] as? Int ?? 993
-            return StoredCredential(id: label, host: host, port: port, username: username)
+            return StoredCredential(id: label, host: host, port: port, username: username, type: type, security: Self.security(from: attrs))
         }
         .sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
     }
@@ -254,6 +257,16 @@ public final class KeychainCredentialStore: Sendable {
         public let host: String
         public let port: Int
         public let username: String
+        /// Stored connection mode; nil for items saved without one.
+        public let security: ConnectionSecurity?
+
+        public init(id: String, host: String, port: Int, username: String, security: ConnectionSecurity? = nil) {
+            self.id = id
+            self.host = host
+            self.port = port
+            self.username = username
+            self.security = security
+        }
     }
 
     public struct StoredCredential: Sendable {
@@ -261,6 +274,8 @@ public final class KeychainCredentialStore: Sendable {
         public let host: String
         public let port: Int
         public let username: String
+        public let type: CredentialType
+        public let security: ConnectionSecurity?
     }
 
     public enum KeychainError: Error, LocalizedError {
@@ -278,6 +293,19 @@ public final class KeychainCredentialStore: Sendable {
     }
 
     // MARK: - Private
+
+    /// `kSecAttrType` four-char codes recording the connection mode ('tls ' / 'stls').
+    private static func typeCode(for security: ConnectionSecurity) -> Int {
+        switch security {
+        case .tls: return 0x746C_7320
+        case .starttls: return 0x7374_6C73
+        }
+    }
+
+    private static func security(from attrs: [String: Any]) -> ConnectionSecurity? {
+        guard let code = (attrs[kSecAttrType as String] as? NSNumber)?.intValue else { return nil }
+        return ConnectionSecurity.allCases.first { typeCode(for: $0) == code }
+    }
 
     private func protocolAttribute(for port: Int, type: CredentialType) -> CFString {
         switch type {

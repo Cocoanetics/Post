@@ -1216,14 +1216,13 @@ public actor PostServer {
         // Get SMTP credentials (from config or keychain)
         let credentials = try await connectionManager.resolveSMTPCredentials(forServer: serverId)
         
-        // Infer TLS mode from port
-        let useTLS = credentials.port == 465
-        let defaultPort = useTLS ? 465 : 587
-        
-        // Create SMTP server instance
+        // Create SMTP server instance; the stored mode wins, else it follows the port
+        let port = credentials.port != 0 ? credentials.port : 465
+        let security = credentials.security ?? .inferred(port: port, isSMTP: true)
         let smtp = SMTPServer(
             host: credentials.host,
-            port: credentials.port != 0 ? credentials.port : defaultPort
+            port: port,
+            transportSecurity: security.transportSecurity
         )
         
         // Connect and authenticate with SMTP

@@ -59,7 +59,7 @@ The daemon holds all IMAP connections. Both the CLI and AI agents talk to the da
 ## Key Features
 
 ### 🔐 Secure Credential Storage
-Store credentials directly in config (simple) or in a hardware-bound macOS Keychain (recommended). Post creates a private keychain encrypted with your Mac's hardware UUID — credentials never leave your machine.
+Store credentials directly in config (simple) or in the macOS login Keychain (recommended) — credentials never leave your machine.
 
 ### 📝 Markdown Email Drafts
 Draft rich HTML emails from plain markdown files. Post handles the conversion and creates drafts in your mail client, ready to review and send.
@@ -105,7 +105,10 @@ CI builds on macOS with Swift 6.4 and on Linux with the pinned `swift:6.4.2-jamm
 swift build
 
 # Add credentials to secure keychain
-post keychain add personal --host imap.gmail.com --port 993
+post credential set --server personal --host imap.gmail.com --port 993
+
+# Optional: a separate SMTP login for sending
+post credential set --server personal --protocol smtp --host smtp.gmail.com
 
 # Create config
 echo '{ "servers": { "personal": {} } }' > ~/.post.json

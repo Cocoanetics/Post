@@ -7,12 +7,18 @@ public struct PostConfiguration: Codable, Sendable {
       public let port: Int
       public let username: String
       public let password: String
+      /// Connection mode; when absent it is derived from the port.
+      public let security: ConnectionSecurity?
 
-      public init(host: String, port: Int, username: String, password: String) {
+      public init(
+        host: String, port: Int, username: String, password: String,
+        security: ConnectionSecurity? = nil
+      ) {
         self.host = host
         self.port = port
         self.username = username
         self.password = password
+        self.security = security
       }
     }
     
@@ -49,16 +55,24 @@ public struct PostConfiguration: Codable, Sendable {
     public let password: String
     /// Set when the account authenticates with an OAuth token; `password` is empty then.
     public let oauth: OAuthCredentialKey?
+    /// Stored connection mode; nil means derive it from the port.
+    public let security: ConnectionSecurity?
 
     public init(
       host: String, port: Int, username: String, password: String,
-      oauth: OAuthCredentialKey? = nil
+      oauth: OAuthCredentialKey? = nil, security: ConnectionSecurity? = nil
     ) {
       self.host = host
       self.port = port
       self.username = username
       self.password = password
       self.oauth = oauth
+      self.security = security
+    }
+
+    /// The stored connection mode, or the one implied by the port.
+    public func effectiveSecurity(isSMTP: Bool) -> ConnectionSecurity {
+      security ?? .inferred(port: port, isSMTP: isSMTP)
     }
 
     public enum Authentication: Sendable, Equatable {
@@ -175,7 +189,8 @@ public struct PostConfiguration: Codable, Sendable {
           host: keychainEntry.credential.host,
           port: keychainEntry.credential.port,
           username: keychainEntry.credential.username,
-          password: keychainEntry.password
+          password: keychainEntry.password,
+          security: keychainEntry.credential.security
         )
       }
     #endif
@@ -185,7 +200,8 @@ public struct PostConfiguration: Codable, Sendable {
         host: inline.host,
         port: inline.port,
         username: inline.username,
-        password: inline.password
+        password: inline.password,
+        security: inline.security
       )
     }
 
@@ -213,7 +229,7 @@ public enum PostConfigurationError: Error, LocalizedError, Sendable {
         "No credentials found for server '\(server)'. Use `post credential set --server \(server)` or add servers.\(server).credentials in ~/.post.json."
     case .noSMTPCredentials(let server):
       return
-        "No SMTP credentials found for server '\(server)'. Use `post credential set --server \(server) --smtp` to configure SMTP credentials separately."
+        "No SMTP credentials found for server '\(server)'. Use `post credential set --server \(server) --protocol smtp` to configure SMTP credentials separately."
     case .legacyServerArrayFormatDetected(let ids):
       let listedIDs = ids.isEmpty ? "<none>" : ids.joined(separator: ", ")
       return """

@@ -29,5 +29,25 @@ final class KeychainCredentialStoreTests: XCTestCase {
         }
         await fulfillment(of: [finished], timeout: 30)
     }
+
+    func testSecurityRoundTripAndProtocolIsolation() throws {
+        let store = KeychainCredentialStore()
+        let id = "post-test-\(UUID().uuidString)"
+        addTeardownBlock {
+            try? store.delete(label: id)
+            try? store.delete(label: id, type: .smtp)
+        }
+        try store.store(id: id, host: "imap.example.com", port: 993, username: "u", password: "a")
+        try store.store(id: id, host: "smtp.example.com", port: 2525, username: "u", password: "b", type: .smtp, security: .tls)
+
+        XCTAssertEqual(try store.fullCredentials(forLabel: id, type: .smtp)?.credential.security, .tls)
+        XCTAssertNil(try store.fullCredentials(forLabel: id)?.credential.security)
+        XCTAssertEqual(try store.list(type: .smtp).first { $0.id == id }?.security, .tls)
+        XCTAssertNil(try store.list().first { $0.id == id && $0.type == .smtp })
+
+        try store.delete(label: id, type: .smtp)
+        XCTAssertNil(try store.fullCredentials(forLabel: id, type: .smtp))
+        XCTAssertEqual(try store.fullCredentials(forLabel: id)?.password, "a")
+    }
 }
 #endif
