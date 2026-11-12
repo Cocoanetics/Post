@@ -18,6 +18,21 @@ final class HTMLToPDFTests: XCTestCase {
         XCTAssertGreaterThan(pdf.count, 500)
     }
 
+    /// Billings Pro's payment notice centres its column in `<td style="display: block">`.
+    /// Before SwiftText 2.8.0 that column was dropped and the export was an empty
+    /// page, whose PDF uses no font at all.
+    func testKeepsColumnInBlockStyledCell() async throws {
+        let html = """
+        <table width="100%"><tr><td></td>\
+        <td style="display: block; max-width: 600px; margin: 0 auto">Payment Declined</td>\
+        <td></td></tr></table>
+        """
+
+        let pdf = try await HTMLToPDF.render(html: html, logger: Logger(label: "test"))
+
+        XCTAssertTrue(String(decoding: pdf, as: UTF8.self).contains("/BaseFont"))
+    }
+
     func testBlanksLocalImageSources() {
         let html = """
         <p><img src="/dev/zero"><IMG alt="a>b" SRC='file:///etc/hosts'>\

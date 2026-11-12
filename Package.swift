@@ -82,12 +82,18 @@ let package = Package(
         // of CJK text embedded the whole 23 MB Hiragino collection. 2.5.0 renders
         // HTML email as a browser shows it — remote and transparent images,
         // presentational attributes, browser table sizing, CR LF line ends — which
-        // `post pdf` needs for receipts such as Google's. Mail HTML is untrusted,
-        // so HTMLToPDF loads its images from the public internet only and never
-        // from disk. Default traits on purpose: traits: ["HTML"] would prune
-        // swift-archive, but SwiftPM then fails a fresh `swift package update`
-        // with "exhausted attempts to resolve … swift-archive".
-        .package(url: "https://github.com/Cocoanetics/SwiftText", .upToNextMajor(from: "2.5.0")),
+        // `post pdf` needs for receipts such as Google's. 2.8.0 keeps the blocks
+        // mail puts where tables and lines do not expect them — a column in
+        // `<td style="display: block">`, `<a href><img style="display: block"></a>`
+        // — which `post pdf` dropped: a Billings Pro notice exported as an empty
+        // page, Audible lost its covers and App Store receipts their billing
+        // address and VAT lines. It also embeds real fonts and draws SVG logos.
+        // Mail HTML is untrusted, so HTMLToPDF loads its images from the public
+        // internet only and never from disk. Default traits on purpose:
+        // traits: ["HTML"] would prune swift-archive, but SwiftPM then fails a
+        // fresh `swift package update` with "exhausted attempts to resolve …
+        // swift-archive".
+        .package(url: "https://github.com/Cocoanetics/SwiftText", .upToNextMajor(from: "2.8.0")),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
         // 1.11.0 introduced LogEvent, which both OSLogHandlers implement.
         .package(url: "https://github.com/apple/swift-log.git", from: "1.11.0"),
