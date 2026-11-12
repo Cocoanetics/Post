@@ -7,23 +7,25 @@ import SwiftTextRender
 /// No WebKit, so this runs on every platform Post builds for. Glyphs the
 /// base-14 fonts lack fall back to installed system fonts.
 ///
-/// The HTML comes from untrusted mail, so its images are held in on two fronts.
-/// Remote `http(s)` images load from the public internet only: `PublicImageLoader`
-/// refuses any host on this machine or a private network, redirects included,
-/// that a sender could otherwise make the daemon request (SSRF). Like a mail
-/// client that shows images, fetching them lets the sender see that the mail was
-/// exported. And the renderer reads absolute paths and `file:` URLs from disk
-/// whatever the loader, so `render` first blanks every image source that is
-/// neither `data:` nor `http(s)`: `<img src="/dev/zero">` would hang the daemon
-/// and `<img src="/Users/…/passport.jpg">` would embed a local file into the PDF.
-/// Fonts likewise: the renderer reads an `@font-face` `src` from disk and never
-/// from the network, so `render` also disables every `@font-face` rule.
+/// The HTML comes from untrusted mail, so what it can make the daemon fetch is
+/// held in on two fronts. Remote `http(s)` images load from the public internet
+/// only: `PublicImageLoader` refuses any host on this machine or a private
+/// network, redirects included, that a sender could otherwise make the daemon
+/// request (SSRF). Like a mail client that shows images, fetching them lets the
+/// sender see that the mail was exported. And nothing the mail names is read from
+/// disk: with `allowsLocalFiles` off the renderer refuses `<img>` paths and
+/// `file:` URLs and the `@font-face` sources in the mail's own `<style>`, where
+/// `/dev/zero` would hang the daemon and `/Users/…/passport.jpg` would be
+/// embedded into the PDF. As a second line, `render` first blanks every image
+/// source that is neither `data:` nor `http(s)` and disables every `@font-face`
+/// rule.
 enum HTMLToPDF {
 
     /// Converts an HTML string to PDF data, logging renderer warnings (such as
     /// images that could not be drawn) instead of writing them to stderr.
     static func render(html: String, logger: Logger) async throws -> Data {
-        let options = RenderOptions(imageLoader: PublicImageLoader.load)
+        var options = RenderOptions(imageLoader: PublicImageLoader.load)
+        options.allowsLocalFiles = false
         let html = removingFontFaces(from: removingLocalImageSources(from: html))
         return try await HTMLRenderer.renderPDF(html: html, options: options) { warning in
             logger.warning("PDF export: \(warning)")

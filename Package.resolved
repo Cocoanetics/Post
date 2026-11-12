@@ -1,5 +1,5 @@
 {
-  "originHash" : "a5ab317bc7ecabe7e5b88d125369df13e1f7c3bfdc818c01213a2957e510ca10",
+  "originHash" : "3a3f3ad92287ca079b3999f2fb8b9ead9b14370a3bc6dca9f4c2e8b60f77b365",
   "pins" : [
     {
       "identity" : "jsonfoundation",
@@ -265,8 +265,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Cocoanetics/SwiftText",
       "state" : {
-        "revision" : "89b99b6944278b8d964effed3f6a493c2577a2d3",
-        "version" : "2.8.1"
+        "revision" : "47e1f9164278141fdeef44eb81627a21d7db477e",
+        "version" : "2.9.0"
       }
     },
     {
