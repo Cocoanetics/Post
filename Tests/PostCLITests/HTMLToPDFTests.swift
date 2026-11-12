@@ -61,4 +61,30 @@ final class HTMLToPDFTests: XCTestCase {
 
         XCTAssertEqual(String(decoding: pdf.prefix(5), as: UTF8.self), "%PDF-")
     }
+
+    func testDisablesFontFaces() {
+        let css = """
+        @font-face{src:url(/dev/zero)} @FONT-FACE{} @\\66 ont-face{} @fo\\nt-face{} \
+        @media print{} @font-feature-values x{} @x-font-face{}
+        """
+
+        let sanitized = HTMLToPDF.removingFontFaces(from: css)
+
+        XCTAssertEqual(sanitized, """
+        @x-font-face{src:url(/dev/zero)} @x-FONT-FACE{} @x-\\66 ont-face{} @x-fo\\nt-face{} \
+        @media print{} @font-feature-values x{} @x-font-face{}
+        """)
+    }
+
+    func testLocalFontFaceIsNotRead() async throws {
+        let html = """
+        <style>@font-face{font-family:x;src:url(/dev/zero)}\
+        @font-face{font-family:y;src:url(file:///dev/zero)}</style>\
+        <p style="font-family:x">hi</p><p style="font-family:y">there</p>
+        """
+
+        let pdf = try await HTMLToPDF.render(html: html, logger: Logger(label: "test"))
+
+        XCTAssertEqual(String(decoding: pdf.prefix(5), as: UTF8.self), "%PDF-")
+    }
 }

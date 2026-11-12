@@ -91,7 +91,8 @@ let package = Package(
         // 2.8.1 loads remote images in release builds: from 2.5.0 to 2.8.0 an
         // optimized build — Homebrew's — drew every one as a grey placeholder.
         // Mail HTML is untrusted, so HTMLToPDF loads its images from the public
-        // internet only and never from disk. Default traits on purpose:
+        // internet only and never from disk, and disables `@font-face`, whose
+        // `src` 2.8.0 reads from disk. Default traits on purpose:
         // traits: ["HTML"] would prune swift-archive, but SwiftPM then fails a
         // fresh `swift package update` with "exhausted attempts to resolve …
         // swift-archive".

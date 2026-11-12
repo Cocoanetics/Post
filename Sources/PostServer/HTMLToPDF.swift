@@ -16,13 +16,16 @@ import SwiftTextRender
 /// whatever the loader, so `render` first blanks every image source that is
 /// neither `data:` nor `http(s)`: `<img src="/dev/zero">` would hang the daemon
 /// and `<img src="/Users/…/passport.jpg">` would embed a local file into the PDF.
+/// Fonts likewise: the renderer reads an `@font-face` `src` from disk and never
+/// from the network, so `render` also disables every `@font-face` rule.
 enum HTMLToPDF {
 
     /// Converts an HTML string to PDF data, logging renderer warnings (such as
     /// images that could not be drawn) instead of writing them to stderr.
     static func render(html: String, logger: Logger) async throws -> Data {
         let options = RenderOptions(imageLoader: PublicImageLoader.load)
-        return try await HTMLRenderer.renderPDF(html: removingLocalImageSources(from: html), options: options) { warning in
+        let html = removingFontFaces(from: removingLocalImageSources(from: html))
+        return try await HTMLRenderer.renderPDF(html: html, options: options) { warning in
             logger.warning("PDF export: \(warning)")
         }
     }
@@ -47,6 +50,28 @@ enum HTMLToPDF {
                 let isKept = ["data:", "http://", "https://"].contains { value.hasPrefix($0) }
                 return isKept ? attribute : "src=\"\""
             }
+        }
+    }
+
+    /// A CSS at-keyword, escapes included: `@\66 ont-face` is `@font-face` too.
+    private static let atKeyword = try! NSRegularExpression(
+        pattern: #"@((?:[-\w]|[^\x00-\x7F]|\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\r\n\f])?|[^\r\n\f0-9a-fA-F]))+)"#)
+    private static let cssEscape = try! NSRegularExpression(
+        pattern: #"\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\r\n\f])?|([^\r\n\f0-9a-fA-F]))"#)
+
+    /// Renames every `@font-face` to `@x-font-face`, an at-rule the renderer
+    /// ignores, so it reads no font file a sender names. That runs over the whole
+    /// document rather than only its `<style>` elements, so no disagreement with
+    /// the HTML parser about where a style sheet ends can let one through.
+    static func removingFontFaces(from html: String) -> String {
+        replacing(atKeyword, in: html) { keyword in
+            let name = replacing(cssEscape, in: String(keyword.dropFirst())) { escape in
+                let escaped = escape.dropFirst()
+                let hex = escaped.prefix { $0.isHexDigit }
+                guard !hex.isEmpty else { return String(escaped) }
+                return UInt32(hex, radix: 16).flatMap(Unicode.Scalar.init).map { String($0) } ?? "\u{FFFD}"
+            }
+            return name.lowercased() == "font-face" ? "@x-" + keyword.dropFirst() : keyword
         }
     }
 
