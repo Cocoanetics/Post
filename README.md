@@ -129,6 +129,11 @@ postd start
 | [swift-argument-parser](https://github.com/apple/swift-argument-parser) | CLI argument parsing |
 | [swift-log](https://github.com/apple/swift-log) | Structured logging |
 
+## Agent Skill
+
+[Skills/post](Skills/post) is the OpenClaw skill for Post (`clawhub install post`).
+It ships with Post's releases and carries Post's version.
+
 ## Related Projects
 
 - **[mail-room](https://github.com/Cocoanetics/mail-room-skill)** — OpenClaw skill for automated email sorting and archival
@@ -145,8 +150,6 @@ postd start
   - Allow creating drafts
   - Allow sending
 - **Multi-agent isolation** — ensure agents only see what they're supposed to see
-- **Homebrew distribution** — easy installation via `brew install cocoanetics/tap/post`
-- **ClawHub skill** — pre-packaged OpenClaw skill for easy integration
 
 ## License
 
