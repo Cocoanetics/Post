@@ -32,7 +32,7 @@ Use the `post` CLI for email tasks and `postd` for the background daemon.
 
 ## Core Rules
 
-- Treat **UIDs as mailbox-scoped**, not globally unique. If a message is not in `INBOX`, pass `--reply-mailbox <mailbox>` when replying.
+- Treat **UIDs as mailbox-scoped**, not globally unique. If a message is not in `INBOX`, pass `--mailbox <mailbox>` when replying.
 - Prefer `--json` when the result will be parsed or reused in a later step.
 - Prefer **scoped API keys** for agents. Use `--token <token>` for one-off commands or set `POST_API_KEY` only in that agent’s environment.
 - Use `post draft --replying-to <uid>` for threaded replies. This auto-derives `from`, `to`, and `subject`, and sets `In-Reply-To` / `References`.
@@ -72,7 +72,7 @@ post draft --server <server> --replying-to <uid> --reply-all --body reply.md
 post draft --server <server> --replying-to <uid>
 
 # Reply to a message outside INBOX
-post draft --server <server> --replying-to <uid> --reply-mailbox Archive --body reply.md
+post draft --server <server> --replying-to <uid> --mailbox Archive --body reply.md
 ```
 
 ### Attachments and exports

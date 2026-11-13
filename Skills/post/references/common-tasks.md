@@ -90,7 +90,7 @@ post draft --server work --replying-to 13106 --body /tmp/reply.md
 post draft \
   --server work \
   --replying-to 5678 \
-  --reply-mailbox Archive \
+  --mailbox Archive \
   --body /tmp/reply.md
 ```
 
@@ -216,7 +216,7 @@ Recommended pattern:
 For replies in archived folders, always remember:
 
 ```bash
---reply-mailbox Archive
+--mailbox Archive
 ```
 
 because UIDs are mailbox-scoped.
