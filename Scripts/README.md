@@ -8,14 +8,14 @@ MissionControl's release recipe for Post runs these after it has tagged
 | Script | What it does |
 | --- | --- |
 | `release-homebrew.sh` | Points `Formula/post.rb` in Cocoanetics/homebrew-tap at the tag's tarball and sha256. |
-| `release-skill.sh` | Sets Cocoanetics/post-skill's version to Post's, then tags and releases it as "Post Skill v<version>". |
 
-They need only a signed-in `gh`. Both are safe to re-run. To run one by hand,
-or to preview it without writing anything:
+The agent skill (`Skills/post`) needs no step: it is part of the tagged tree.
+
+The scripts need only a signed-in `gh` and are safe to re-run. To run one by
+hand, or to preview it without writing anything:
 
 ```bash
 DRY_RUN=1 Scripts/release-homebrew.sh 1.11.0
-Scripts/release-skill.sh 1.11.0
 ```
 
 The recipe (`mc repo set Cocoanetics/Post --release-recipe @recipe.json`):
@@ -26,8 +26,7 @@ The recipe (`mc repo set Cocoanetics/Post --release-recipe @recipe.json`):
   "production": {
     "tag": "v{version}",
     "steps": [
-      { "kind": "command", "run": ["Scripts/release-homebrew.sh"], "title": "Update Homebrew tap" },
-      { "kind": "command", "run": ["Scripts/release-skill.sh"], "title": "Release post-skill" }
+      { "kind": "command", "run": ["Scripts/release-homebrew.sh"], "title": "Update Homebrew tap" }
     ]
   }
 }
