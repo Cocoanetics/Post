@@ -831,6 +831,57 @@ public actor PostServer {
         }
     }
 
+    /// The image parts of `message` that its HTML body refers to by one of
+    /// `contentIDs` (normalized), first part per Content-ID. A part whose declared
+    /// size is over the limit for embedding is left out, so it is not downloaded.
+    internal nonisolated static func inlineImageParts(
+        of message: Message, referencedBy contentIDs: Set<String>
+    ) -> [MessagePart] {
+        var seen: Set<String> = []
+        return message.cids.filter { part in
+            guard let contentID = part.contentId.map(normalizedContentID),
+                  contentIDs.contains(contentID),
+                  HTMLToPDF.inlineImageMediaType(part.contentType) != nil,
+                  (part.size ?? 0) <= maximumEncodedInlineImageBytes(encoding: part.encoding)
+            else { return false }
+            return seen.insert(contentID).inserted
+        }
+    }
+
+    /// The largest declared (still transfer-encoded) size of an image part whose
+    /// decoded data can fit `HTMLToPDF.maximumInlineImageBytes`. The declared size
+    /// counts the line breaks the encoding adds: base64 folds every 76 characters,
+    /// quoted-printable every 76 with a soft `=` break.
+    internal nonisolated static func maximumEncodedInlineImageBytes(encoding: String?) -> Int {
+        let decoded = HTMLToPDF.maximumInlineImageBytes
+        let slack = 1024
+        switch encoding?.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "base64":
+            let encoded = (decoded + 2) / 3 * 4
+            return encoded + (encoded + 75) / 76 * 2 + slack
+        case "quoted-printable":
+            let encoded = decoded * 3
+            return encoded + (encoded + 74) / 75 * 3 + slack
+        default:
+            return decoded + slack
+        }
+    }
+
+    /// The downloaded parts among `inlineImageParts`, by normalized Content-ID,
+    /// as `HTMLToPDF.render` takes them.
+    internal nonisolated static func inlineImages(
+        of message: Message, referencedBy contentIDs: Set<String>
+    ) -> [String: HTMLToPDF.InlineImage] {
+        var images: [String: HTMLToPDF.InlineImage] = [:]
+        for part in inlineImageParts(of: message, referencedBy: contentIDs) {
+            guard let contentID = part.contentId, let data = part.decodedData() ?? part.data,
+                  data.count <= HTMLToPDF.maximumInlineImageBytes else { continue }
+            images[normalizedContentID(contentID)] =
+                HTMLToPDF.InlineImage(contentType: part.contentType, data: data)
+        }
+        return images
+    }
+
     internal nonisolated static func normalizedContentID(_ contentID: String) -> String {
         var value = contentID.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -881,7 +932,16 @@ public actor PostServer {
                 throw PostServerError.messageNotFound(uid: uid, mailbox: mailbox)
             }
             // The PDF is rendered from the text or HTML body; attachments are not downloaded.
-            let message = try await downloading(outline.bodies, of: outline, uid: messageUID, using: server)
+            var message = try await downloading(outline.bodies, of: outline, uid: messageUID, using: server)
+
+            // Except the images the HTML body shows from the message itself (`cid:`).
+            let referencedContentIDs = HTMLToPDF.inlineImageContentIDs(in: message.htmlBody ?? "")
+            let inlineImageParts = Self.inlineImageParts(of: message, referencedBy: referencedContentIDs)
+            if !inlineImageParts.isEmpty {
+                // `message` keeps the bodies already downloaded; only the image sections are fetched.
+                message = try await downloading(inlineImageParts, of: message, uid: messageUID, using: server)
+            }
+            let inlineImages = Self.inlineImages(of: message, referencedBy: referencedContentIDs)
 
             let html: String
             if let htmlBody = message.htmlBody, !htmlBody.isEmpty {
@@ -895,7 +955,7 @@ public actor PostServer {
             let subject = message.subject ?? "message-\(uid)"
             let filename = Self.sanitizeFilename(subject) + ".pdf"
 
-            let pdfData = try await HTMLToPDF.render(html: html, logger: logger)
+            let pdfData = try await HTMLToPDF.render(html: html, inlineImages: inlineImages, logger: logger)
             return AttachmentData(
                 filename: filename,
                 contentType: "application/pdf",
