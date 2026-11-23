@@ -1,6 +1,7 @@
 import Logging
 import XCTest
 @testable import PostServer
+import SwiftMail
 
 final class HTMLToPDFTests: XCTestCase {
     func testRendersMailHTMLAsPDF() async throws {
@@ -53,6 +54,104 @@ final class HTMLToPDFTests: XCTestCase {
         XCTAssertTrue(sanitized.contains("src=\" HTTP://Example.com/Logo.PNG \""))
         XCTAssertTrue(sanitized.contains("data-src=\"x\""))
         XCTAssertTrue(sanitized.contains("src=\"data:image/png;base64,AAAA\""))
+    }
+
+    func testFindsInlineImageContentIDs() {
+        let html = """
+        <img src="cid:Logo@Example.com"><IMG SRC=' CID:banner%40example.com '>\
+        <img src="https://example.com/p.gif"><a href="cid:not-an-image">x</a>
+        """
+
+        XCTAssertEqual(
+            HTMLToPDF.inlineImageContentIDs(in: html), ["logo@example.com", "banner@example.com"])
+    }
+
+    func testEmbedsInlineImagesAsDataURIs() {
+        let png = Data([0x89, 0x50, 0x4E, 0x47])
+        let html = """
+        <img alt="SimplePay" src="cid:Logo@Example.com"><img src='cid:unknown'>\
+        <img src="cid:text"><img src="cid:quoted">
+        """
+
+        let embedded = HTMLToPDF.embeddingInlineImages([
+            "logo@example.com": .init(contentType: "IMAGE/PNG; name=\"logo.png\"", data: png),
+            "text": .init(contentType: "text/html", data: png),
+            "quoted": .init(contentType: "image/png\" onerror=\"x", data: png),
+        ], in: html)
+
+        XCTAssertTrue(embedded.contains("src=\"data:image/png;base64,\(png.base64EncodedString())\""))
+        XCTAssertTrue(embedded.contains("alt=\"SimplePay\""))
+        // No matching part, not an image, or a media type that is no plain token: left
+        // alone here and blanked before rendering.
+        XCTAssertTrue(embedded.contains("src='cid:unknown'"))
+        XCTAssertTrue(embedded.contains("src=\"cid:text\""))
+        XCTAssertTrue(embedded.contains("src=\"cid:quoted\""))
+        XCTAssertFalse(HTMLToPDF.removingLocalImageSources(from: embedded).contains("cid:"))
+    }
+
+    func testInlineImageIsDrawnIntoPDF() async throws {
+        // A 1x1 red PNG.
+        let png = try XCTUnwrap(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="))
+        let html = "<p>Receipt</p><img src=\"cid:logo\" width=\"40\" height=\"40\">"
+        let logger = Logger(label: "test")
+
+        let without = try await HTMLToPDF.render(html: html, logger: logger)
+        let with = try await HTMLToPDF.render(
+            html: html, inlineImages: ["logo": .init(contentType: "image/png", data: png)], logger: logger)
+
+        XCTAssertFalse(String(decoding: without, as: UTF8.self).contains("/Subtype /Image"))
+        XCTAssertTrue(String(decoding: with, as: UTF8.self).contains("/Subtype /Image"))
+    }
+
+    /// A mail as payment providers send it: the logo travels as a `multipart/related`
+    /// part and the HTML body shows it by Content-ID.
+    func testInlineImagePartsOfAMessageAreEmbedded() async throws {
+        let eml = """
+        From: Shop <shop@example.com>
+        Subject: Receipt
+        MIME-Version: 1.0
+        Content-Type: multipart/related; boundary="rel"
+
+        --rel
+        Content-Type: text/html; charset=utf-8
+
+        <p>Receipt</p><img src="cid:logo-1" width="40" height="40"><img src="cid:notes">
+        --rel
+        Content-Type: image/png
+        Content-Transfer-Encoding: base64
+        Content-ID: <Logo-1>
+        Content-Disposition: inline; filename="logo"
+
+        iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==
+        --rel
+        Content-Type: text/plain
+        Content-ID: <notes>
+
+        not an image
+        --rel
+        Content-Type: image/png
+        Content-Transfer-Encoding: base64
+        Content-ID: <unused>
+
+        iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==
+        --rel--
+
+        """.replacingOccurrences(of: "\n", with: "\r\n")
+        let message = try EMLParser.parse(Data(eml.utf8))
+        let html = try XCTUnwrap(message.htmlBody)
+
+        let referenced = HTMLToPDF.inlineImageContentIDs(in: html)
+        XCTAssertEqual(referenced, ["logo-1", "notes"])
+        // Only the referenced image is downloaded: not the text part, not the unused image.
+        XCTAssertEqual(
+            PostServer.inlineImageParts(of: message, referencedBy: referenced).map(\.contentId), ["Logo-1"])
+
+        let images = PostServer.inlineImages(of: message, referencedBy: referenced)
+        XCTAssertEqual(Array(images.keys), ["logo-1"])
+
+        let pdf = try await HTMLToPDF.render(html: html, inlineImages: images, logger: Logger(label: "test"))
+        XCTAssertTrue(String(decoding: pdf, as: UTF8.self).contains("/Subtype /Image"))
     }
 
     func testLocalImageRendersAsPlaceholder() async throws {
