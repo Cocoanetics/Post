@@ -938,8 +938,8 @@ public actor PostServer {
             let referencedContentIDs = HTMLToPDF.inlineImageContentIDs(in: message.htmlBody ?? "")
             let inlineImageParts = Self.inlineImageParts(of: message, referencedBy: referencedContentIDs)
             if !inlineImageParts.isEmpty {
-                message = try await downloading(
-                    outline.bodies + inlineImageParts, of: outline, uid: messageUID, using: server)
+                // `message` keeps the bodies already downloaded; only the image sections are fetched.
+                message = try await downloading(inlineImageParts, of: message, uid: messageUID, using: server)
             }
             let inlineImages = Self.inlineImages(of: message, referencedBy: referencedContentIDs)
 
