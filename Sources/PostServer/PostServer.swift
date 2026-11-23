@@ -842,9 +842,28 @@ public actor PostServer {
             guard let contentID = part.contentId.map(normalizedContentID),
                   contentIDs.contains(contentID),
                   HTMLToPDF.inlineImageMediaType(part.contentType) != nil,
-                  (part.size ?? 0) <= HTMLToPDF.maximumInlineImageBytes * 4 / 3 + 1024
+                  (part.size ?? 0) <= maximumEncodedInlineImageBytes(encoding: part.encoding)
             else { return false }
             return seen.insert(contentID).inserted
+        }
+    }
+
+    /// The largest declared (still transfer-encoded) size of an image part whose
+    /// decoded data can fit `HTMLToPDF.maximumInlineImageBytes`. The declared size
+    /// counts the line breaks the encoding adds: base64 folds every 76 characters,
+    /// quoted-printable every 76 with a soft `=` break.
+    internal nonisolated static func maximumEncodedInlineImageBytes(encoding: String?) -> Int {
+        let decoded = HTMLToPDF.maximumInlineImageBytes
+        let slack = 1024
+        switch encoding?.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "base64":
+            let encoded = (decoded + 2) / 3 * 4
+            return encoded + (encoded + 75) / 76 * 2 + slack
+        case "quoted-printable":
+            let encoded = decoded * 3
+            return encoded + (encoded + 74) / 75 * 3 + slack
+        default:
+            return decoded + slack
         }
     }
 

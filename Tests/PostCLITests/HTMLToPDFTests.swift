@@ -154,6 +154,27 @@ final class HTMLToPDFTests: XCTestCase {
         XCTAssertTrue(String(decoding: pdf, as: UTF8.self).contains("/Subtype /Image"))
     }
 
+    func testInlineImageSizeLimitCountsTransferEncoding() throws {
+        let limit = HTMLToPDF.maximumInlineImageBytes
+        // A base64 image of exactly the limit, folded into 76-character CRLF lines.
+        let base64 = (limit + 2) / 3 * 4
+        let foldedBase64 = base64 + (base64 + 75) / 76 * 2
+        func part(_ number: Int, _ id: String, encoding: String?, size: Int) -> MessagePart {
+            MessagePart(section: Section([number]), contentType: "image/png", encoding: encoding,
+                        contentId: "<\(id)>", size: size)
+        }
+        let message = Message(header: MessageInfo(sequenceNumber: SequenceNumber(1)), parts: [
+            part(1, "folded", encoding: "base64", size: foldedBase64),
+            part(2, "too-big", encoding: "BASE64", size: foldedBase64 + 2048),
+            part(3, "binary", encoding: "binary", size: limit),
+            part(4, "binary-too-big", encoding: nil, size: limit + 2048)
+        ])
+        let referenced: Set<String> = ["folded", "too-big", "binary", "binary-too-big"]
+        XCTAssertEqual(
+            PostServer.inlineImageParts(of: message, referencedBy: referenced).map(\.contentId),
+            ["<folded>", "<binary>"])
+    }
+
     func testLocalImageRendersAsPlaceholder() async throws {
         let pdf = try await HTMLToPDF.render(
             html: "<img src=\"/dev/zero\"><img src=\"file:///dev/zero\">", logger: Logger(label: "test"))
